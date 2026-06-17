@@ -1,0 +1,14 @@
+{
+  "name": "bs-jdbc-tool",
+  "version": "1.0.0",
+  "description": "Local Claude Code MCP server for JDBC database queries by alias",
+  "type": "module",
+  "private": true,
+  "bin": { "bs-jdbc-tool": "./src/server.js" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/node/*.test.js",
+    "compile:java": "node -e \"import('./src/java-runner.js').then(m => m.compileExecutor())\""
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "latest" }
+}

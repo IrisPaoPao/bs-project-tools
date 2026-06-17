@@ -1,0 +1,12 @@
+{
+  "name": "saas-login-scripts",
+  "version": "1.0.0",
+  "description": "SAAS Industry 登录脚本",
+  "scripts": {
+    "login": "node login-script.js",
+    "login:headless": "node login-script.js --headless"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

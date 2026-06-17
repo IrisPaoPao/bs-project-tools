@@ -1,0 +1,29 @@
+{
+  "defaults": {
+    "maxRows": 100,
+    "maxRowsLimit": 1000,
+    "timeoutSeconds": 10,
+    "timeoutSecondsLimit": 60,
+    "allowDml": true
+  },
+  "databases": {
+    "dev-mysql": {
+      "type": "mysql",
+      "description": "MySQL 开发库 172.18.163.23:3306",
+      "jdbcUrl": "jdbc:mysql://172.18.163.23:3306?useUnicode=true&characterEncoding=utf8&characterSetResults=utf8&serverTimezone=Asia/Shanghai",
+      "driverClass": "com.mysql.cj.jdbc.Driver",
+      "driverJars": ["drivers/mysql-connector-j.jar"],
+      "username": "root",
+      "password": "请在此处填写MySQL密码"
+    },
+    "dev-oracle": {
+      "type": "oracle",
+      "description": "Oracle 开发库 172.18.163.10:1521/pdb YLPZCS0612",
+      "jdbcUrl": "jdbc:oracle:thin:@172.18.163.10:1521/pdb",
+      "driverClass": "oracle.jdbc.OracleDriver",
+      "driverJars": ["drivers/ojdbc.jar"],
+      "username": "YLPZCS0612",
+      "password": "请在此处填写Oracle密码"
+    }
+  }
+}

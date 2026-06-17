@@ -1,0 +1,16 @@
+# local credentials
+config.local.json
+
+# copied JDBC drivers
+drivers/*.jar
+
+# node
+node_modules/
+npm-debug.log*
+
+# java build output
+java/build/
+*.class
+
+# os
+.DS_Store

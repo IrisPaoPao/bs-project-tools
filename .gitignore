@@ -1,0 +1,29 @@
+# OS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+
+# Claude local settings
+.claude/settings.local.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Logs and local process files
+logs/
+*.log
+*.pid
+
+# Local credentials/config
+config.local.json
+**/config.local.json
+
+# JDBC drivers and Java build outputs
+**/drivers/*.jar
+**/java/build/
+*.class
+
+# Superpowers generated implementation artifacts are kept intentionally.
