@@ -4,7 +4,8 @@
     "maxRowsLimit": 1000,
     "timeoutSeconds": 10,
     "timeoutSecondsLimit": 60,
-    "allowDml": true
+    "allowDml": true,
+    "maxBatchSize": 200
   },
   "databases": {
     "dev-mysql": {

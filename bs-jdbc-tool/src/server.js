@@ -12,7 +12,8 @@ import {
   listDatabasesTool,
   describeDatabaseTool,
   testConnectionTool,
-  jdbcQueryTool
+  jdbcQueryTool,
+  jdbcBatchTool
 } from './tools/index.js';
 
 const server = new McpServer(
@@ -102,6 +103,21 @@ server.tool(
     timeoutSeconds: z.number().int().positive().optional().describe('Query timeout in seconds (optional, limited by config)')
   },
   wrapToolHandler(jdbcQueryTool)
+);
+
+server.tool(
+  jdbcBatchTool.name,
+  jdbcBatchTool.description,
+  {
+    alias: z.string().describe('The database alias to query'),
+    statements: z.array(z.object({
+      sql: z.string().describe('SQL statement to execute'),
+      params: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().describe('Optional array of parameter values for prepared statements')
+    })).describe('Array of SQL statements to execute (min 1)'),
+    onError: z.enum(['abort', 'continue']).optional().describe('Transaction mode on error: abort (rollback all, default) or continue (commit successful statements)'),
+    timeoutSeconds: z.number().int().positive().optional().describe('Per-statement query timeout in seconds (optional, limited by config)')
+  },
+  wrapToolHandler(jdbcBatchTool)
 );
 
 async function main() {
