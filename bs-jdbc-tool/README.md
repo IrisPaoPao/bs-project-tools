@@ -1,5 +1,43 @@
 # bs-jdbc-tool
 
+---
+
+## 🤖 Agent 能力说明
+
+**给 Claude / AI Agent 的快速指引：**
+
+本项目是一个 **JDBC 数据库操作工具**，通过 MCP 协议暴露给 Claude Code。你可以直接调用以下工具操作数据库：
+
+### ✅ 你可以用这些工具做什么
+
+| 工具 | 适用场景 | 示例 |
+|------|---------|------|
+| `list_databases` | 先调用这个！查看有哪些数据库别名可用 | "看看现在配了哪些库" |
+| `describe_database` | 查看某个数据库的详细配置（连接信息、驱动等） | "dev-oracle 连的是哪个地址？" |
+| `jdbc_test_connection` | 验证数据库连接是否正常 | "先确认 Oracle 能连上" |
+| `jdbc_query` | **单条 SQL 执行** — 查询、DML、DDL 都可以 | "查一下这张表有多少条数据" |
+| `jdbc_batch` | ✨ **批量/事务执行** — 多条 SQL 在同一个事务里原子执行 | "跑 88 条幂等导入，失败整体回滚" |
+
+### 🎯 选择工具的决策树
+
+```
+要执行 SQL 吗？
+  ├─ 只有 1 条 → 用 jdbc_query
+  └─ N 条 SQL（N ≥ 2）
+      ├─ 需要原子性（一条失败全回滚）→ jdbc_batch onError: "abort"（默认）
+      └─ 允许部分成功部分失败 → jdbc_batch onError: "continue"
+```
+
+### ⚠️ Agent 重要提醒
+
+1. **DML 默认开启**：当前配置 `allowDml: true`，`INSERT/UPDATE/DELETE` 都可以执行
+2. **批量保护**：`jdbc_batch` 一次最多 200 条（可配置 `maxBatchSize`）
+3. **单语句强制**：每条 SQL 只能是单语句（`;` 只能有一个末尾的），多语句会在校验层被拒绝
+4. **有密码保护**：不要把 `config.local.json` 里的真实密码输出到对话中
+5. **优先用 batch**：凡是多条相关 SQL（同一次导入、同一次修复），优先用 `jdbc_batch` 而不是循环调用 `jdbc_query`
+
+---
+
 ## 工具说明
 
 本地 Claude Code MCP Server，根据数据库别名执行 JDBC SQL。
@@ -105,7 +143,21 @@ MCP 服务器提供以下工具：
 | `list_databases` | 列出所有配置的数据库别名及描述 |
 | `describe_database` | 查看指定数据库的详细配置信息 |
 | `jdbc_test_connection` | 测试指定数据库连接是否正常 |
-| `jdbc_query` | 执行 SQL 查询（支持 SELECT、INSERT、UPDATE、DELETE、CREATE TABLE 等） |
+| `jdbc_query` | 执行单条 SQL（SELECT、INSERT、UPDATE、DELETE、CREATE TABLE 等） |
+| `jdbc_batch` | ✨ 批量执行多条 SQL，同一事务。支持两种错误模式：<br>`abort`（默认）：任意失败整体回滚<br>`continue`：失败记录、成功提交 |
+
+### jdbc_batch 使用示例
+
+```json
+{
+  "alias": "dev-mysql",
+  "statements": [
+    { "sql": "INSERT INTO t (id, name) VALUES (?, ?)", "params": [1, "a"] },
+    { "sql": "UPDATE t SET name = ? WHERE id = ?", "params": ["b", 1] }
+  ],
+  "onError": "abort"
+}
+```
 
 ## 验证命令
 
