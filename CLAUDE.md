@@ -80,6 +80,51 @@ bs-project-tools/
 
 ---
 
+## 📋 工具使用示例
+
+### jdbc_query（单条 SQL）
+
+```json
+{
+  "alias": "dev-mysql",
+  "sql": "SELECT * FROM auth_function WHERE code = ?",
+  "params": ["reconciliation:config"],
+  "timeoutSeconds": 10
+}
+```
+
+- SELECT：返回 `columns` + `rows` + `rowCount`
+- INSERT/UPDATE/DELETE：返回 `affectedRows`（影响行数）
+- params 是可选的，没有参数可以不传
+
+---
+
+### jdbc_batch（多条 SQL + 事务）
+
+```json
+{
+  "alias": "dev-mysql",
+  "statements": [
+    { "sql": "INSERT INTO t (id, name) VALUES (?, ?)", "params": [1, "a"] },
+    { "sql": "UPDATE t SET name = ? WHERE id = ?", "params": ["b", 1] },
+    { "sql": "DELETE FROM t WHERE id = ?", "params": [2] }
+  ],
+  "onError": "abort"
+}
+```
+
+| onError 值 | 事务行为 | 适用场景 |
+|-----------|---------|---------|
+| `"abort"`（默认） | 任意一条失败 → 全部回滚 | 数据导入、批量变更、需要原子性的操作 |
+| `"continue"` | 失败的记录错误，成功的提交 | 数据修复、清理脚本，允许部分成功 |
+
+返回结构：
+- `total/succeeded/failed`：总数/成功数/失败数
+- `committed`：true/false（abort 模式下如果有失败就是 false）
+- `results`：每条的 `index/success/affectedRows/error` 详情
+
+---
+
 ## 📝 最后更新
 
 - 2026-06-17: 新增 `jdbc_batch` 批量事务工具，更新本能力说明
