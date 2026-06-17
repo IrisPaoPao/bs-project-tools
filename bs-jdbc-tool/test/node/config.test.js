@@ -596,3 +596,91 @@ test('toolInput.allowDml is completely ignored regardless of value', () => {
   );
   assert.equal(options2.allowDml, true); // Still BUILTIN_DEFAULTS true
 });
+
+test('maxBatchSize resolves from builtin → global defaults → db defaults', () => {
+  const config = {
+    defaults: { maxBatchSize: 300 },
+    databases: {
+      test1: { driverClass: 'x', jdbcUrl: 'x', driverJars: ['x.jar'] },
+      test2: { driverClass: 'x', jdbcUrl: 'x', driverJars: ['x.jar'], defaults: { maxBatchSize: 400 } }
+    }
+  };
+
+  // Uses global default when no db defaults
+  const noDefaults = getDatabaseConfig(config, 'test1');
+  const opts1 = resolveEffectiveOptions({}, config, noDefaults);
+  assert.equal(opts1.maxBatchSize, 300);  // global default wins
+
+  // DB default overrides global
+  const withDbDefaults = getDatabaseConfig(config, 'test2');
+  const opts2 = resolveEffectiveOptions({}, config, withDbDefaults);
+  assert.equal(opts2.maxBatchSize, 400);
+});
+
+test('maxBatchSize validation rejects non-positive integers', () => {
+  const file1 = writeTempConfig({
+    defaults: { maxBatchSize: 0 },
+    databases: {
+      demo: {
+        type: 'mysql',
+        jdbcUrl: 'jdbc:mysql://localhost:3306/demo',
+        driverClass: 'com.mysql.cj.jdbc.Driver',
+        driverJars: ['drivers/mysql.jar'],
+        username: 'root',
+        password: ''
+      }
+    }
+  });
+
+  assert.throws(
+    () => loadConfigFromFile(file1, { checkDriverFiles: false }),
+    (err) => {
+      assert.match(err.message, /defaults\.maxBatchSize must be a positive integer/);
+      return true;
+    }
+  );
+
+  const file2 = writeTempConfig({
+    defaults: { maxBatchSize: -5 },
+    databases: {
+      demo: {
+        type: 'mysql',
+        jdbcUrl: 'jdbc:mysql://localhost:3306/demo',
+        driverClass: 'com.mysql.cj.jdbc.Driver',
+        driverJars: ['drivers/mysql.jar'],
+        username: 'root',
+        password: ''
+      }
+    }
+  });
+
+  assert.throws(
+    () => loadConfigFromFile(file2, { checkDriverFiles: false }),
+    (err) => {
+      assert.match(err.message, /defaults\.maxBatchSize must be a positive integer/);
+      return true;
+    }
+  );
+
+  const file3 = writeTempConfig({
+    defaults: { maxBatchSize: 'large' },
+    databases: {
+      demo: {
+        type: 'mysql',
+        jdbcUrl: 'jdbc:mysql://localhost:3306/demo',
+        driverClass: 'com.mysql.cj.jdbc.Driver',
+        driverJars: ['drivers/mysql.jar'],
+        username: 'root',
+        password: ''
+      }
+    }
+  });
+
+  assert.throws(
+    () => loadConfigFromFile(file3, { checkDriverFiles: false }),
+    (err) => {
+      assert.match(err.message, /defaults\.maxBatchSize must be a positive integer/);
+      return true;
+    }
+  );
+});

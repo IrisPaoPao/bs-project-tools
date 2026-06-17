@@ -9,7 +9,8 @@ const BUILTIN_DEFAULTS = {
   maxRowsLimit: 5000,
   timeoutSeconds: 30,
   timeoutSecondsLimit: 120,
-  allowDml: true
+  allowDml: true,
+  maxBatchSize: 200
 };
 
 // Project root directory (where src/config.js lives)
@@ -90,6 +91,8 @@ export function resolveEffectiveOptions(toolInput, config, db) {
   const timeoutSecondsRaw = input.timeoutSeconds ?? dbDefaults.timeoutSeconds ?? configDefaults.timeoutSeconds ?? BUILTIN_DEFAULTS.timeoutSeconds;
   // allowDml must NOT come from toolInput - security restriction
   const allowDml = dbDefaults.allowDml ?? configDefaults.allowDml ?? BUILTIN_DEFAULTS.allowDml;
+  // maxBatchSize must NOT come from toolInput - security restriction
+  const maxBatchSize = dbDefaults.maxBatchSize ?? configDefaults.maxBatchSize ?? BUILTIN_DEFAULTS.maxBatchSize;
 
   const maxRows = Math.min(Number(maxRowsRaw) || 0, maxRowsLimit) || BUILTIN_DEFAULTS.maxRows;
   const timeoutSeconds = Math.min(Number(timeoutSecondsRaw) || 0, timeoutSecondsLimit) || BUILTIN_DEFAULTS.timeoutSeconds;
@@ -97,7 +100,8 @@ export function resolveEffectiveOptions(toolInput, config, db) {
   return {
     maxRows,
     timeoutSeconds,
-    allowDml
+    allowDml,
+    maxBatchSize
   };
 }
 
@@ -141,6 +145,11 @@ function validateDefaults(defaults, path) {
   }
   if ('allowDml' in defaults && typeof defaults.allowDml !== 'boolean') {
     throw new ConfigError(`${path}.allowDml must be a boolean`);
+  }
+  if ('maxBatchSize' in defaults) {
+    if (typeof defaults.maxBatchSize !== 'number' || !Number.isInteger(defaults.maxBatchSize) || defaults.maxBatchSize <= 0) {
+      throw new ConfigError(`${path}.maxBatchSize must be a positive integer`);
+    }
   }
 }
 
