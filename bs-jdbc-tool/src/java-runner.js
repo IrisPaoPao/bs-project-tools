@@ -277,7 +277,7 @@ export async function compileExecutor() {
   });
 }
 
-export function buildExecutorRequest({ action, db, options, sql, params, sqlKind }) {
+export function buildExecutorRequest({ action, db, options, sql, params, sqlKind, statements, mode }) {
   // Convert driverJars to absolute paths
   const driverJars = db.driverJars.map(jar => resolveToolPath(jar));
 
@@ -296,6 +296,11 @@ export function buildExecutorRequest({ action, db, options, sql, params, sqlKind
     request.maxRows = options?.maxRows || 500;
     request.timeoutSeconds = options?.timeoutSeconds || 30;
     request.sqlKind = sqlKind || 'query';
+  } else if (action === 'executeBatch') {
+    request.statements = statements;
+    request.mode = mode || 'abort';
+    request.maxRows = options?.maxRows || 500;
+    request.timeoutSeconds = options?.timeoutSeconds || 30;
   }
 
   return request;

@@ -104,6 +104,55 @@ test('buildExecutorRequest builds testConnection request', () => {
   assert.ok(Array.isArray(request.driverJars));
 });
 
+test('buildExecutorRequest builds executeBatch request', () => {
+  const db = {
+    jdbcUrl: 'jdbc:mysql://localhost:3306/test',
+    driverClass: 'com.mysql.cj.jdbc.Driver',
+    driverJars: ['drivers/mysql-connector-j.jar'],
+    username: 'root',
+    password: 'secret'
+  };
+  const statements = [
+    { sql: 'INSERT INTO t VALUES (?)', params: [1] },
+    { sql: 'DELETE FROM t WHERE id = ?', params: [2] }
+  ];
+
+  const request = buildExecutorRequest({
+    action: 'executeBatch',
+    db,
+    options: { timeoutSeconds: 15, maxRows: 100 },
+    statements,
+    mode: 'abort'
+  });
+
+  assert.equal(request.action, 'executeBatch');
+  assert.equal(request.jdbcUrl, 'jdbc:mysql://localhost:3306/test');
+  assert.equal(request.driverClass, 'com.mysql.cj.jdbc.Driver');
+  assert.deepEqual(request.statements, statements);
+  assert.equal(request.mode, 'abort');
+  assert.equal(request.timeoutSeconds, 15);
+  assert.equal(request.maxRows, 100);
+});
+
+test('buildExecutorRequest defaults mode to abort for executeBatch', () => {
+  const db = {
+    jdbcUrl: 'jdbc:mysql://localhost:3306/test',
+    driverClass: 'com.mysql.cj.jdbc.Driver',
+    driverJars: ['drivers/mysql-connector-j.jar'],
+    username: 'root',
+    password: 'secret'
+  };
+
+  const request = buildExecutorRequest({
+    action: 'executeBatch',
+    db,
+    options: {},
+    statements: [{ sql: 'SELECT 1' }]
+  });
+
+  assert.equal(request.mode, 'abort');
+});
+
 test('executorErrorResult returns error result structure', () => {
   const error = new Error('Test error message');
   error.hint = 'Check your Java installation';
