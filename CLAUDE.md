@@ -9,9 +9,47 @@
 ```
 bs-project-tools/
 ├── bs-jdbc-tool/    # JDBC 数据库操作 MCP 服务 ✅ 已启用
-├── bs-java-run/     # Java 服务运行管理（预留）
+├── bs-java-run/     # Java 服务运行管理（Shell 脚本 + Playwright）
 └── .mcp.json        # MCP 服务配置
 ```
+
+---
+
+## 🚀 bs-java-run — Java 服务运行管理
+
+**不是 MCP 工具**，需通过 Bash 直接调用脚本。
+
+### 可做的事情
+
+| 操作 | 脚本 | 说明 |
+|------|------|------|
+| 启动服务 | `bs-java-run/start_services.sh` | 启动所有本地 Java 服务 |
+| 停止服务 | `bs-java-run/stop_services.sh` | 停止所有本地 Java 服务 |
+| 重启服务 | `bs-java-run/restart_services.sh` | 重启所有本地 Java 服务 |
+| 查看状态 | `bs-java-run/status_services.sh` | 查看服务运行状态 |
+| 自动登录 | `bs-java-run/login.sh` | Playwright 模拟浏览器登录，获取 Token |
+
+### 本地服务列表
+
+| 服务名 | 路径 | 端口 |
+|--------|------|------|
+| `saas-data-gateway` | `../vasService/saas-data-gateway/` | 81 |
+| `saas-reconciliation-business` | `../vasService/saas-reconciliation-business/` | 82 |
+| `saas-ybld-rpa` | `../vasService/saas-ybld-rpa/` | 83 |
+
+### 登录使用方式
+
+```bash
+# 有头模式（可看到浏览器）
+cd bs-java-run && ./login.sh
+
+# 无头模式（后台运行）
+cd bs-java-run && ./login.sh --headless
+```
+
+登录成功后会输出 JWT Token，`authorization` 请求头直接使用（无需加 Bearer 前缀）。
+
+> ⚠️ 登录接口参数经过前端加密，无法用 curl 明文调用，必须通过 Playwright 脚本。
 
 ---
 
