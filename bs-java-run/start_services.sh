@@ -248,6 +248,10 @@ start_service() {
 
     log_info "启动 $name (端口 $port, Java: $java_bin) ..."
     cd "$war_dir"
+
+    # 记录当前日志行数，用于 wait_ready 只检查本次启动的新内容
+    _SVC_LOG_BASELINE=$(wc -l < "$log_file" 2>/dev/null || echo 0)
+
     nohup "$java_bin" -cp "$war_name" \
         -Dloader.path="${exploded}/WEB-INF/classes/,${exploded}/WEB-INF/lib/" \
         -Dserver.port="$port" \
@@ -256,7 +260,7 @@ start_service() {
         -DNACOS_NAMESPACE="$NACOS_NAMESPACE" \
         $COMMON_JVM_ARGS \
         org.springframework.boot.loader.PropertiesLauncher \
-        > "$log_file" 2>&1 &
+        >> "$log_file" 2>&1 &
 
     local pid=$!
     echo "$pid" > "$pid_file"
@@ -264,18 +268,61 @@ start_service() {
 }
 
 wait_ready() {
-    local name=$1 port=$2 max_wait=${3:-120} elapsed=0
-    log_info "等待 $name 就绪 ..."
+    local name=$1 port=$2 max_wait=${3:-180} elapsed=0
+    local pid_file="${LOG_DIR}/${name}.pid"
+    local log_file="${LOG_DIR}/${name}.log"
+    local baseline=${_SVC_LOG_BASELINE:-0}
+    local pid=$(cat "$pid_file" 2>/dev/null || echo "")
+    local stable_after_ready=5  # 端口+日志都满足后，再稳定多少秒
+
+    log_info "等待 $name 就绪（端口监听 + Spring 容器就绪 + 稳定 ${stable_after_ready}s）..."
+
+    # 错误标志：Spring Boot 装配中途失败的典型关键词
+    local fatal_pattern='Application run failed|APPLICATION FAILED TO START|UnsatisfiedDependencyException|Exception encountered during context initialization|BeanCreationException'
+
+    local ready_at=-1
     while [ $elapsed -lt $max_wait ]; do
-        if check_port "$port"; then
-            log_pass "$name 已就绪 (端口 $port, 耗时 ${elapsed}s)"
-            return 0
+        # 1. 进程必须活着
+        if [ -n "$pid" ] && ! ps -p "$pid" >/dev/null 2>&1; then
+            log_fail "$name 进程已退出 (PID $pid)，最近日志:"
+            tail -30 "$log_file" | sed 's/^/    /'
+            return 1
         fi
+
+        # 2. 本次启动新日志中是否出现致命错误
+        if [ -f "$log_file" ]; then
+            local fatal=$(tail -n +$((baseline + 1)) "$log_file" | grep -E "$fatal_pattern" | head -1)
+            if [ -n "$fatal" ]; then
+                log_fail "$name 启动失败（日志中检测到致命错误）:"
+                echo "    $fatal"
+                return 1
+            fi
+        fi
+
+        # 3. 端口 listening + 日志出现 Started ... → 进入"稳定观察"窗口
+        local port_ok=false started_ok=false
+        check_port "$port" && port_ok=true
+        if [ -f "$log_file" ]; then
+            tail -n +$((baseline + 1)) "$log_file" | grep -q "Started .* in [0-9.]* seconds" && started_ok=true
+        fi
+
+        if $port_ok && $started_ok; then
+            if [ $ready_at -lt 0 ]; then
+                ready_at=$elapsed
+                log_info "  ${elapsed}s: 端口+Spring 容器就绪，观察 ${stable_after_ready}s 稳定性 ..."
+            elif [ $((elapsed - ready_at)) -ge $stable_after_ready ]; then
+                log_pass "$name 已就绪 (端口 $port, 总耗时 ${elapsed}s)"
+                return 0
+            fi
+        else
+            ready_at=-1  # 任一条件回退则重新计时
+        fi
+
         sleep 2
         elapsed=$((elapsed + 2))
-        [ $((elapsed % 10)) -eq 0 ] && log_info "  已等待 ${elapsed}s ..."
+        [ $((elapsed % 10)) -eq 0 ] && log_info "  已等待 ${elapsed}s ... (port=$port_ok started=$started_ok)"
     done
-    log_fail "$name 启动超时 (${max_wait}s)，请查看日志: ${LOG_DIR}/${name}.log"
+    log_fail "$name 启动超时 (${max_wait}s)，请查看日志: $log_file"
     return 1
 }
 

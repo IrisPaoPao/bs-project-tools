@@ -84,7 +84,22 @@ stop_by_pid() {
     if [ -f "$pid_file" ]; then
         local pid=$(cat "$pid_file")
         if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null && log_pass "$name (PID $pid) 已停止"
+            kill "$pid" 2>/dev/null
+            log_info "$name (PID $pid) 已发送停止信号，等待退出 ..."
+            # 等待进程真正退出（最多 30s）
+            local waited=0
+            while [ $waited -lt 30 ]; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    log_pass "$name (PID $pid) 已停止 (${waited}s)"
+                    rm -f "$pid_file"
+                    return 0
+                fi
+                sleep 1
+                waited=$((waited + 1))
+            done
+            log_fail "$name (PID $pid) 在 30s 内未退出"
+            rm -f "$pid_file"  # 删除过期 PID 文件，后续靠端口兜底
+            return 1
         else
             log_info "$name (PID $pid) 进程不存在"
         fi
@@ -92,13 +107,29 @@ stop_by_pid() {
     else
         log_info "$name: 无 pid 文件"
     fi
+    return 0
+}
+
+wait_port_free() {
+    local name=$1 port=$2 max_wait=${3:-30} elapsed=0
+    while [ $elapsed -lt $max_wait ]; do
+        if ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            [ $elapsed -gt 0 ] && log_pass "端口 $port 已释放 (${elapsed}s)"
+            return 0
+        fi
+        [ $elapsed -eq 0 ] && log_info "等待 $name 端口 $port 释放 ..."
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    log_fail "$name 端口 $port 在 ${max_wait}s 内未释放"
+    return 1
 }
 
 stop_by_port() {
     local name=$1 port=$2
     local pids=$(lsof -i ":$port" -sTCP:LISTEN -t 2>/dev/null || true)
     if [ -n "${pids:-}" ]; then
-        log_info "$name 端口 $port 仍有进程: ${pids}，发送 SIGTERM ..."
+        log_info "$name 端口 $port 仍有进程: $(echo $pids | tr '\n' ' ')，发送 SIGTERM ..."
         echo "$pids" | xargs kill 2>/dev/null || true
         sleep 3
         # 还没死的用 SIGKILL
@@ -107,7 +138,10 @@ stop_by_port() {
             log_info "  进程仍存活，发送 SIGKILL ..."
             echo "$pids" | xargs kill -9 2>/dev/null || true
         fi
+        # 等待端口真正释放
+        wait_port_free "$name" "$port" 30 || return 1
     fi
+    return 0
 }
 
 # ==================== 交互式选择 ====================
@@ -159,10 +193,10 @@ for i in "${!_SVC_NAMES[@]}"; do
 
     # 先按 PID 文件停止
     if [ "$SKIP_PID" != "true" ]; then
-        stop_by_pid "$name"
+        stop_by_pid "$name" || true  # 用端口兜底，不在此处判定失败
     fi
-    # 兜底：按端口清理
-    stop_by_port "$name" "$port"
+    # 兜底：按端口清理并等待释放
+    stop_by_port "$name" "$port" # 失败时脚本将因 set -e 退出
 done
 
 echo ""
