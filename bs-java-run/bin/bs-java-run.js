@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // 读取 package.json 版本
-const packageJson = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
 
 program
   .name('bs-java-run')
