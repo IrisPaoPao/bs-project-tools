@@ -1,12 +1,20 @@
 {
-  "name": "saas-login-scripts",
-  "version": "1.0.0",
-  "description": "SAAS Industry 登录脚本",
+  "name": "bs-java-run",
+  "version": "2.0.0",
+  "description": "BS Java 服务运行管理 CLI 工具",
+  "type": "module",
+  "bin": {
+    "bs-java-run": "./bin/bs-java-run.js"
+  },
   "scripts": {
     "login": "node login-script.js",
     "login:headless": "node login-script.js --headless"
   },
   "dependencies": {
+    "commander": "^11.1.0",
     "playwright": "^1.60.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
