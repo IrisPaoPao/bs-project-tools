@@ -106,22 +106,22 @@ async function login(options = {}) {
     await page.goto(CONFIG.loginUrl, { waitUntil: 'networkidle', timeout });
 
     // 第 2 步：填写主账号
-    const mainAccountInput = page.getByRole('textbox', { name: '请输入您的主账号' });
+    const mainAccountInput = page.locator('input[placeholder="请输入您的主账号"]');
     await mainAccountInput.click();
     await mainAccountInput.fill(CONFIG.mainAccount);
 
     // 第 3 步：填写用户名
-    const usernameInput = page.getByRole('textbox', { name: '请输入您的用户名' });
+    const usernameInput = page.locator('input[placeholder="请输入您的用户名"]');
     await usernameInput.click();
     await usernameInput.fill(CONFIG.username);
 
     // 第 4 步：填写密码
-    const passwordInput = page.getByRole('textbox', { name: '请输入您的密码' });
+    const passwordInput = page.locator('input[placeholder="请输入您的密码"]');
     await passwordInput.click();
     await passwordInput.fill(CONFIG.password);
 
     // 第 5 步：点击登录按钮
-    const loginButton = page.getByRole('button', { name: '马上登录' });
+    const loginButton = page.locator('button.login-btn');
     await loginButton.click();
 
     // 第 6 步：等待页面跳转到 portal
