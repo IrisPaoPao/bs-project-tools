@@ -174,11 +174,12 @@ export function startJavaService(name, port, root, options = {}) {
   const nacosHostArg = nacosHost || config.nacosHost ? `-DNACOS_HOST=${nacosHost || config.nacosHost}` : '';
   const nacosNsArg = nacosNamespace || config.nacosNamespace ? `-DNACOS_NAMESPACE=${nacosNamespace || config.nacosNamespace}` : '';
 
+  const loaderPath = `${path.basename(explodedDir)}/WEB-INF/classes/,${path.basename(explodedDir)}/WEB-INF/lib/`;
   const args = [
     '-cp', warName,
-    '-Dloader.path', `${path.basename(explodedDir)}/WEB-INF/classes/,${path.basename(explodedDir)}/WEB-INF/lib/`,
-    '-Dserver.port', String(port),
-    '-Dfile.encoding=utf-8',
+    `-Dloader.path=${loaderPath}`,
+    `-Dserver.port=${port}`,
+    '-Dfile.encoding=UTF-8',
   ];
   if (nacosHostArg) args.push(nacosHostArg);
   if (nacosNsArg) args.push(nacosNsArg);
@@ -209,7 +210,6 @@ export function startJavaService(name, port, root, options = {}) {
 export async function waitServiceReady(name, port, maxWait = 180) {
   const logFile = getLogFile(name);
   const pidFile = getPidFile(name);
-  const baseline = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').split('\n').length : 0;
   const stableAfterReady = 5;
   const fatalPattern = /Application run failed|APPLICATION FAILED TO START|UnsatisfiedDependencyException|Exception encountered during context initialization|BeanCreationException/;
 
@@ -232,9 +232,9 @@ export async function waitServiceReady(name, port, maxWait = 180) {
 
     // 检查致命错误
     if (fs.existsSync(logFile)) {
-      const lines = fs.readFileSync(logFile, 'utf8').split('\n');
-      const newLines = lines.slice(baseline);
-      const fatal = newLines.find(line => fatalPattern.test(line));
+      const recentLogs = tailLog(name, 400);
+      const lines = recentLogs.split('\n');
+      const fatal = lines.find(line => fatalPattern.test(line));
       if (fatal) {
         error(`${name} 启动失败（日志中检测到致命错误）:`);
         console.log(`    ${fatal}`);
@@ -245,9 +245,9 @@ export async function waitServiceReady(name, port, maxWait = 180) {
     const portOk = checkPort(port);
     let startedOk = false;
     if (fs.existsSync(logFile)) {
-      const lines = fs.readFileSync(logFile, 'utf8').split('\n');
-      const newLines = lines.slice(baseline);
-      startedOk = newLines.some(line => /Started .* in [0-9.]* seconds/.test(line));
+      const recentLogs = tailLog(name, 400);
+      const lines = recentLogs.split('\n');
+      startedOk = lines.some(line => /Started .* in [0-9.]* seconds/.test(line));
     }
 
     if (portOk && startedOk) {
