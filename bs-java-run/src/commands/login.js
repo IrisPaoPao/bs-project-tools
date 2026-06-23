@@ -3,7 +3,7 @@ import { saveToken, saveTokenToFile, loadToken } from '../lib/token-cache.js';
 import { info, success, error, quietOutput } from '../lib/logger.js';
 
 const require = createRequire(import.meta.url);
-const { login } = require('../../login-script.js');
+const { login } = require('../../login-script.cjs');
 
 export async function loginCommand(options) {
   try {
