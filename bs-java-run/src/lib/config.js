@@ -50,8 +50,7 @@ function parseServices(content) {
 
       if (!name) continue;
 
-      const pathMatch = rawPath.match(/`(.+?)`/);
-      const servicePath = pathMatch ? expandPath(pathMatch[1]) : '';
+      const servicePath = rawPath ? expandPath(rawPath) : '';
       if (!servicePath) continue;
 
       services.push({ name, path: servicePath, port: port ? parseInt(port, 10) : null });
