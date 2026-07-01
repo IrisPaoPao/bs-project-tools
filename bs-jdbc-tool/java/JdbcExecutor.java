@@ -454,6 +454,127 @@ public class JdbcExecutor {
         }
     }
 
+    private static Map<String, Object> executeBatch(
+            String jdbcUrl,
+            String driverClass,
+            List<String> driverJars,
+            String username,
+            String password,
+            List<Map<String, Object>> statements,
+            String mode,
+            int maxRows,
+            int timeoutSeconds
+    ) throws Exception {
+        long startTime = System.currentTimeMillis();
+
+        URL[] jarUrls = new URL[driverJars.size()];
+        for (int i = 0; i < driverJars.size(); i++) {
+            jarUrls[i] = new java.io.File(driverJars.get(i)).toURI().toURL();
+        }
+
+        try (URLClassLoader loader = new URLClassLoader(jarUrls)) {
+            Class<?> driverCls = loader.loadClass(driverClass);
+            Driver driver = (Driver) driverCls.getDeclaredConstructor().newInstance();
+
+            Properties props = new Properties();
+            if (username != null) props.put("user", username);
+            if (password != null) props.put("password", password);
+
+            try (Connection conn = driver.connect(jdbcUrl, props)) {
+                boolean abortMode = "abort".equals(mode);
+                conn.setAutoCommit(!abortMode);
+
+                List<Map<String, Object>> results = new ArrayList<>();
+                int total = statements.size();
+                int succeeded = 0;
+                int failed = 0;
+                boolean committed = true;
+
+                for (int i = 0; i < statements.size(); i++) {
+                    Map<String, Object> stmt = statements.get(i);
+                    String sql = (String) stmt.get("sql");
+                    @SuppressWarnings("unchecked")
+                    List<Object> params = (List<Object>) stmt.get("params");
+                    if (params == null) params = new ArrayList<>();
+
+                    Map<String, Object> stmtResult = new LinkedHashMap<>();
+                    stmtResult.put("index", i);
+
+                    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                        ps.setQueryTimeout(timeoutSeconds);
+                        ps.setMaxRows(maxRows + 1);
+
+                        for (int j = 0; j < params.size(); j++) {
+                            ps.setObject(j + 1, params.get(j));
+                        }
+
+                        boolean hasResultSet = ps.execute();
+                        stmtResult.put("success", true);
+
+                        if (hasResultSet) {
+                            try (ResultSet rs = ps.getResultSet()) {
+                                ResultSetMetaData rsmd = rs.getMetaData();
+                                int colCount = rsmd.getColumnCount();
+                                List<String> columns = new ArrayList<>();
+                                for (int c = 1; c <= colCount; c++) {
+                                    columns.add(rsmd.getColumnLabel(c));
+                                }
+                                List<List<Object>> rows = new ArrayList<>();
+                                while (rs.next()) {
+                                    List<Object> row = new ArrayList<>();
+                                    for (int c = 1; c <= colCount; c++) {
+                                        row.add(normalizeValue(rs.getObject(c)));
+                                    }
+                                    rows.add(row);
+                                }
+                                stmtResult.put("columns", columns);
+                                stmtResult.put("rows", rows);
+                                stmtResult.put("rowCount", rows.size());
+                            }
+                        } else {
+                            int updateCount = ps.getUpdateCount();
+                            stmtResult.put("affectedRows", updateCount == -1 ? 0 : updateCount);
+                        }
+
+                        succeeded++;
+                    } catch (SQLException e) {
+                        failed++;
+                        stmtResult.put("success", false);
+                        Map<String, Object> errorInfo = new LinkedHashMap<>();
+                        errorInfo.put("type", "SQLException");
+                        errorInfo.put("message", e.getMessage());
+                        errorInfo.put("sqlState", e.getSQLState());
+                        errorInfo.put("vendorCode", e.getErrorCode());
+                        stmtResult.put("error", errorInfo);
+
+                        if (abortMode) {
+                            committed = false;
+                            break;
+                        }
+                    }
+                    results.add(stmtResult);
+                }
+
+                if (abortMode && committed) {
+                    conn.commit();
+                } else if (abortMode && !committed) {
+                    try { conn.rollback(); } catch (SQLException ignored) {}
+                }
+
+                long elapsedMs = System.currentTimeMillis() - startTime;
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("success", true);
+                result.put("elapsedMs", elapsedMs);
+                result.put("total", total);
+                result.put("succeeded", succeeded);
+                result.put("failed", failed);
+                result.put("committed", committed);
+                result.put("results", results);
+                return result;
+            }
+        }
+    }
+
     public static void main(String[] args) {
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
@@ -493,6 +614,15 @@ public class JdbcExecutor {
 
                     result = execute(jdbcUrl, driverClass, driverJars, username, password,
                             sql, params, maxRows, timeoutSeconds, sqlKind);
+                } else if ("executeBatch".equals(action)) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> stmts = (List<Map<String, Object>>) inputObj.get("statements");
+                    String batchMode = (String) inputObj.getOrDefault("mode", "abort");
+                    Number maxRowsNum = (Number) inputObj.getOrDefault("maxRows", 500);
+                    Number timeoutSecondsNum = (Number) inputObj.getOrDefault("timeoutSeconds", 30);
+
+                    result = executeBatch(jdbcUrl, driverClass, driverJars, username, password,
+                            stmts, batchMode, maxRowsNum.intValue(), timeoutSecondsNum.intValue());
                 } else {
                     long elapsedMs = System.currentTimeMillis() - startTime;
                     Map<String, Object> errorResult = new LinkedHashMap<>();
