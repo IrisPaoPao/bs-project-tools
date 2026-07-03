@@ -7,7 +7,9 @@ const TOKEN_FILE = path.join(CACHE_DIR, 'token.json');
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    fs.chmodSync(CACHE_DIR, 0o700);
   }
 }
 
@@ -18,7 +20,8 @@ export function saveToken(token, metadata = {}) {
     savedAt: new Date().toISOString(),
     ...metadata,
   };
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify(data, null, 2));
+  fs.writeFileSync(TOKEN_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.chmodSync(TOKEN_FILE, 0o600);
 }
 
 export function loadToken() {
@@ -51,7 +54,8 @@ export function clearToken() {
 }
 
 export function saveTokenToFile(token, filePath) {
-  fs.writeFileSync(filePath, token);
+  fs.writeFileSync(filePath, token, { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
 }
 
 export { TOKEN_FILE, CACHE_DIR };

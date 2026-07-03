@@ -10,5 +10,5 @@
     "test": "node --test test/node/*.test.js",
     "compile:java": "node -e \"import('./src/java-runner.js').then(m => m.compileExecutor())\""
   },
-  "dependencies": { "@modelcontextprotocol/sdk": "latest" }
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.29.0" }
 }

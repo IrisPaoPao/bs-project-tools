@@ -7,7 +7,7 @@ export async function restart(serviceArg, options) {
   // 1. 停止服务
   console.log('==========================================================');
   console.log(`  重启服务: ${serviceName}`);
-  console.log(`  跳过构建: ${options.skipBuild}`);
+  console.log(`  启动前构建: ${options.build ? '是' : '否'}`);
   if (options.nacosHost) console.log(`  Nacos 主机: ${options.nacosHost}`);
   if (options.nacosNamespace) console.log(`  Nacos 命名空间: ${options.nacosNamespace}`);
   console.log('==========================================================');

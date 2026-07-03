@@ -24,10 +24,10 @@ NACOS_NAMESPACE=saas-industry-dev
 
 | 配置项 | 值 |
 |--------|---|
-| 登录地址 | `http://172.18.163.52:30000/saas-industry/#/login` |
-| 主账号 | `120045` |
-| 用户名 | `001` |
-| 密码 | `123@admin` |
+| 登录地址 |  |
+| 主账号 |  |
+| 用户名 |  |
+| 密码 |  |
 | 登录接口 | `POST /saas-industry/saas/identity/industry/privatizationLogin` |
 | Authorization 格式 | 直接使用 JWT Token，无 Bearer 前缀 |
 | Authorization 请求头 | `authorization: <token>` |
@@ -39,8 +39,8 @@ NACOS_NAMESPACE=saas-industry-dev
 
 | 脚本 | 说明 |
 |------|------|
-| `login-script.js` | Playwright 版，推荐使用，可模拟完整浏览器登录流程 |
-| `login.sh` | Shell 包装脚本，调用 login-script.js |
+| `login-script.cjs` | Playwright 版，推荐使用，可模拟完整浏览器登录流程 |
+| `login.sh` | Shell 包装脚本，调用 login-script.cjs |
 | `login-curl.sh` | curl 版（不可用，因接口参数加密） |
 
 ### 使用方式

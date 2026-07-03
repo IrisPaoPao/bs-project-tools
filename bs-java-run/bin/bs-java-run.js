@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { program } from 'commander';
+import { program, Option } from 'commander';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -9,6 +9,8 @@ import { start } from '../src/commands/start.js';
 import { stop } from '../src/commands/stop.js';
 import { restart } from '../src/commands/restart.js';
 import { status } from '../src/commands/status.js';
+import { build } from '../src/commands/build.js';
+import { up } from '../src/commands/up.js';
 import { loginCommand, tokenCommand } from '../src/commands/login.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,12 +28,37 @@ program
 program
   .command('start [service]')
   .description('启动 Java 服务')
-  .option('-s, --skip-build', '跳过 mvn package', false)
+  .option('-b, --build', '启动前先执行 mvn package', false)
+  .addOption(new Option('-s, --skip-build', '兼容旧参数：start 现在默认不构建').hideHelp().default(false))
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
+  .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
   .option('-y, --yes', '非交互模式，默认选择全部', false)
   .action(async (service, options) => {
     const code = await start(service, options);
+    process.exit(code);
+  });
+
+// build 命令
+program
+  .command('build [service]')
+  .description('构建 Java 服务')
+  .option('-y, --yes', '非交互模式，默认构建全部', false)
+  .action(async (service, options) => {
+    const code = await build(service, options);
+    process.exit(code);
+  });
+
+// up 命令
+program
+  .command('up [service]')
+  .description('构建并启动 Java 服务')
+  .option('-H, --nacos-host <host>', 'Nacos 主机地址')
+  .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
+  .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
+  .option('-y, --yes', '非交互模式，默认构建并启动全部', false)
+  .action(async (service, options) => {
+    const code = await up(service, options);
     process.exit(code);
   });
 
@@ -50,9 +77,11 @@ program
 program
   .command('restart [service]')
   .description('重启 Java 服务')
-  .option('-s, --skip-build', '跳过 mvn package', false)
+  .option('-b, --build', '启动前先执行 mvn package', false)
+  .addOption(new Option('-s, --skip-build', '兼容旧参数：restart 现在默认不构建').hideHelp().default(false))
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
+  .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
   .option('-y, --yes', '非交互模式，默认重启全部', false)
   .action(async (service, options) => {
     const code = await restart(service, options);

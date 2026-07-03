@@ -1,9 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 
-const SCRIPT_DIR = path.resolve(path.dirname(import.meta.url).replace('file://', ''));
+const SCRIPT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const JAVARUN_MD = path.resolve(SCRIPT_DIR, '..', '..', 'JAVARUN.md');
+const JAVARUN_LOCAL_MD = path.resolve(SCRIPT_DIR, '..', '..', 'JAVARUN.local.md');
+const DEFAULT_STARTUP_TIMEOUT_SECONDS = 420;
 
 // 展开 $HOME
 function expandPath(p) {
@@ -27,6 +30,33 @@ function readTableValue(content, key) {
     if (cells[0] === key) return cells[1] || '';
   }
   return '';
+}
+
+function readMergedTableValue(primaryContent, fallbackContent, key) {
+  return readTableValue(primaryContent, key) || readTableValue(fallbackContent, key);
+}
+
+function readConfigFile(filePath, required = true) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (!required && error.code === 'ENOENT') {
+      return '';
+    }
+    throw new Error(`无法读取 JAVARUN.md: ${filePath} (${error.message})`);
+  }
+}
+
+export function resolveStartupTimeoutSeconds(value, fallback = DEFAULT_STARTUP_TIMEOUT_SECONDS) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`启动等待超时时间必须是正整数秒: ${value}`);
+  }
+  return parsed;
 }
 
 function parseServices(content) {
@@ -62,27 +92,26 @@ function parseServices(content) {
   return services.filter(s => s.port);
 }
 
-function parseLoginConfig(content) {
+function parseLoginConfig(content, localContent = '') {
   return {
-    loginUrl: readTableValue(content, '登录地址'),
-    mainAccount: readTableValue(content, '主账号'),
-    username: readTableValue(content, '用户名'),
-    password: readTableValue(content, '密码'),
-    loginApi: readTableValue(content, '登录接口').replace(/^[A-Z]+\s+/, ''),
-    authorizationFormat: readTableValue(content, 'Authorization 格式'),
+    loginUrl: readMergedTableValue(localContent, content, '登录地址'),
+    mainAccount: readMergedTableValue(localContent, content, '主账号'),
+    username: readMergedTableValue(localContent, content, '用户名'),
+    password: readMergedTableValue(localContent, content, '密码'),
+    loginApi: readMergedTableValue(localContent, content, '登录接口').replace(/^[A-Z]+\s+/, ''),
+    authorizationFormat: readMergedTableValue(localContent, content, 'Authorization 格式'),
     tokenField: 'response.token',
   };
 }
 
-export function loadConfig(env = process.env) {
-  let content;
-  try {
-    content = fs.readFileSync(JAVARUN_MD, 'utf8');
-  } catch (error) {
-    throw new Error(`无法读取 JAVARUN.md: ${JAVARUN_MD} (${error.message})`);
-  }
+export function loadConfig(env = process.env, options = {}) {
+  const configFile = options.configFile || JAVARUN_MD;
+  const localConfigFile = options.localConfigFile || path.join(path.dirname(configFile), 'JAVARUN.local.md');
+  const content = readConfigFile(configFile);
+  const localContent = readConfigFile(localConfigFile, false);
 
   const lines = content.split(/\r?\n/);
+  const localLines = localContent.split(/\r?\n/);
   let javaHome = '';
   let nacosHost = '';
   let nacosNamespace = '';
@@ -109,12 +138,22 @@ export function loadConfig(env = process.env) {
     }
   }
 
+  for (const line of localLines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('NACOS_HOST=')) {
+      nacosHost = trimmed.slice('NACOS_HOST='.length);
+    } else if (trimmed.startsWith('NACOS_NAMESPACE=')) {
+      nacosNamespace = trimmed.slice('NACOS_NAMESPACE='.length);
+    }
+  }
+
   return {
-    services: parseServices(content),
+    services: parseServices(localContent).length > 0 ? parseServices(localContent) : parseServices(content),
     javaHome: env.BS_JAVA_HOME || javaHome,
     nacosHost: env.NACOS_HOST || nacosHost,
     nacosNamespace: env.NACOS_NAMESPACE || nacosNamespace,
-    login: parseLoginConfig(content),
+    startupTimeoutSeconds: resolveStartupTimeoutSeconds(env.BS_STARTUP_TIMEOUT),
+    login: parseLoginConfig(content, localContent),
     logDir: env.LOG_DIR || path.resolve(SCRIPT_DIR, '..', '..', 'logs'),
   };
 }
@@ -140,4 +179,4 @@ export function requireService(name) {
   return service;
 }
 
-export { JAVARUN_MD };
+export { JAVARUN_MD, JAVARUN_LOCAL_MD, DEFAULT_STARTUP_TIMEOUT_SECONDS };

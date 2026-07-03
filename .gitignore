@@ -20,6 +20,7 @@ logs/
 # Local credentials/config
 config.local.json
 **/config.local.json
+**/JAVARUN.local.md
 
 # JDBC drivers and Java build outputs
 **/drivers/*.jar

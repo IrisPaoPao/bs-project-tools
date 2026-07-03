@@ -7,8 +7,9 @@
     "bs-java-run": "./bin/bs-java-run.js"
   },
   "scripts": {
-    "login": "node login-script.js",
-    "login:headless": "node login-script.js --headless"
+    "test": "node --test test/node/*.test.js",
+    "login": "node login-script.cjs",
+    "login:headless": "node login-script.cjs --headless"
   },
   "dependencies": {
     "commander": "^11.1.0",

@@ -4,7 +4,7 @@ import { buildExecutorRequest, runExecutor } from '../java-runner.js';
 
 export const jdbcBatchTool = {
   name: 'jdbc_batch',
-  description: 'Execute multiple SQL statements in a single database connection with configurable transaction mode. For abort mode (default), all statements roll back on any failure. For continue mode, failures are recorded and successful statements commit.',
+  description: 'Execute multiple SQL statements in a single database connection with configurable error handling. In abort mode (default), statements run in one transaction and roll back on first failure. In continue mode, statements run best-effort with autocommit; failures are recorded and later statements continue.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -32,7 +32,7 @@ export const jdbcBatchTool = {
       onError: {
         type: 'string',
         enum: ['abort', 'continue'],
-        description: 'Transaction mode on error: abort (rollback all, default) or continue (commit successful statements)'
+        description: 'Error handling mode: abort (rollback all, default) or continue (best-effort per-statement autocommit)'
       },
       timeoutSeconds: {
         type: 'number',

@@ -16,7 +16,7 @@
 | `describe_database` | 查看某个数据库的详细配置（连接信息、驱动等） | "dev-oracle 连的是哪个地址？" |
 | `jdbc_test_connection` | 验证数据库连接是否正常 | "先确认 Oracle 能连上" |
 | `jdbc_query` | **单条 SQL 执行** — 查询、DML、DDL 都可以 | "查一下这张表有多少条数据" |
-| `jdbc_batch` | ✨ **批量/事务执行** — 多条 SQL 在同一个事务里原子执行 | "跑 88 条幂等导入，失败整体回滚" |
+| `jdbc_batch` | ✨ **批量执行** — abort 模式同一事务；continue 模式逐条尽力执行 | "跑 88 条幂等导入，失败整体回滚" |
 
 ### 🎯 选择工具的决策树
 
@@ -144,7 +144,7 @@ MCP 服务器提供以下工具：
 | `describe_database` | 查看指定数据库的详细配置信息 |
 | `jdbc_test_connection` | 测试指定数据库连接是否正常 |
 | `jdbc_query` | 执行单条 SQL（SELECT、INSERT、UPDATE、DELETE、CREATE TABLE 等） |
-| `jdbc_batch` | ✨ 批量执行多条 SQL，同一事务。支持两种错误模式：<br>`abort`（默认）：任意失败整体回滚<br>`continue`：失败记录、成功提交 |
+| `jdbc_batch` | ✨ 批量执行多条 SQL。支持两种错误模式：<br>`abort`（默认）：同一事务，任意失败整体回滚<br>`continue`：逐条自动提交，失败记录，后续继续执行 |
 
 ### jdbc_batch 使用示例
 

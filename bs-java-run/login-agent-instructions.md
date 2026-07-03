@@ -8,10 +8,10 @@
 
 | 参数 | 值 |
 |------|---|
-| 登录地址 | `http://172.18.163.52:30000/saas-industry/#/login` |
-| 主账号 | `120045` |
-| 用户名 | `001` |
-| 密码 | `123@admin` |
+| 登录地址 | 通过 `BS_LOGIN_URL` 或 `JAVARUN.local.md` 配置 |
+| 主账号 | 通过 `BS_LOGIN_MAIN_ACCOUNT` 或 `JAVARUN.local.md` 配置 |
+| 用户名 | 通过 `BS_LOGIN_USERNAME` 或 `JAVARUN.local.md` 配置 |
+| 密码 | 通过 `BS_LOGIN_PASSWORD` 或 `JAVARUN.local.md` 配置 |
 
 ## 登录方式
 

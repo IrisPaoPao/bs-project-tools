@@ -23,9 +23,10 @@ bs-project-tools/
 
 | 操作 | 脚本 | 说明 |
 |------|------|------|
-| 启动服务 | `bs-java-run/start_services.sh` | 启动所有本地 Java 服务 |
+| 构建服务 | `bs-java-run/build_services.sh` | Maven 打包所有本地 Java 服务 |
+| 启动服务 | `bs-java-run/start_services.sh` | 启动所有本地 Java 服务（默认不构建） |
 | 停止服务 | `bs-java-run/stop_services.sh` | 停止所有本地 Java 服务 |
-| 重启服务 | `bs-java-run/restart_services.sh` | 重启所有本地 Java 服务 |
+| 重启服务 | `bs-java-run/restart_services.sh` | 重启所有本地 Java 服务（默认不构建） |
 | 查看状态 | `bs-java-run/status_services.sh` | 查看服务运行状态 |
 | 自动登录 | `bs-java-run/login.sh` | Playwright 模拟浏览器登录，获取 Token |
 
@@ -65,7 +66,7 @@ cd bs-java-run && ./login.sh --headless
 | `describe_database` | 查看数据库配置详情 | 检查连接信息、驱动、参数 |
 | `jdbc_test_connection` | 测试数据库连接 | 操作前先确认连接正常 |
 | `jdbc_query` | 执行**单条** SQL | SELECT / INSERT / UPDATE / DELETE / DDL |
-| `jdbc_batch` | ✨ 执行**多条** SQL，同一事务 | **多条 SQL 永远优先用这个，不要循环调用 `jdbc_query`** |
+| `jdbc_batch` | ✨ 执行**多条** SQL；abort 模式同一事务，continue 模式逐条尽力执行 | **多条 SQL 永远优先用这个，不要循环调用 `jdbc_query`** |
 
 ---
 
@@ -154,7 +155,7 @@ cd bs-java-run && ./login.sh --headless
 | onError 值 | 事务行为 | 适用场景 |
 |-----------|---------|---------|
 | `"abort"`（默认） | 任意一条失败 → 全部回滚 | 数据导入、批量变更、需要原子性的操作 |
-| `"continue"` | 失败的记录错误，成功的提交 | 数据修复、清理脚本，允许部分成功 |
+| `"continue"` | 逐条自动提交，失败记录，后续继续执行 | 数据修复、清理脚本，允许部分成功 |
 
 返回结构：
 - `total/succeeded/failed`：总数/成功数/失败数

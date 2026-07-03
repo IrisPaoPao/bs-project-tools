@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execSync, spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getConfig } from './config.js';
@@ -140,8 +140,141 @@ export function resolveWar(root, serverModule) {
 
 export function buildService(root) {
   info(`打包 (mvn clean package -DskipTests) ...`);
-  execSync('mvn -q -DskipTests clean package', { cwd: root, stdio: 'inherit' });
+  const command = 'mvn -q -DskipTests clean package';
+  const result = spawnSync('mvn', ['-q', '-DskipTests', 'clean', 'package'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 100 * 1024 * 1024,
+  });
+
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    const failure = classifyMavenFailure(output);
+    if (failure.type === 'dependency-resolution') {
+      throw new DependencyResolutionError({
+        command,
+        root,
+        status: result.status,
+        failure,
+      });
+    }
+    throw new Error(`Maven 构建失败 (exit ${result.status}): ${command}`);
+  }
+
   success('打包完成');
+}
+
+export class DependencyResolutionError extends Error {
+  constructor({ command, root, status, failure }) {
+    super(formatDependencyResolutionMessage({ command, root, status, failure }));
+    this.name = 'DependencyResolutionError';
+    this.command = command;
+    this.root = root;
+    this.status = status;
+    this.failure = failure;
+  }
+}
+
+export function classifyMavenFailure(output = '') {
+  const text = String(output || '');
+  const dependencyPatterns = [
+    /Could not resolve dependencies/i,
+    /Could not find artifact/i,
+    /Could not transfer artifact/i,
+    /Failed to collect dependencies/i,
+    /Failed to read artifact descriptor/i,
+    /Failure to find .* was cached/i,
+    /Non-resolvable parent POM/i,
+    /Plugin .* could not be resolved/i,
+    /Could not resolve artifact/i,
+    /The following artifacts could not be resolved/i,
+    /The POM for .* is missing/i,
+  ];
+
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const summary = findSummaryLine(lines, dependencyPatterns);
+  const type = dependencyPatterns.some(pattern => pattern.test(text)) ? 'dependency-resolution' : 'generic';
+
+  return {
+    type,
+    summary,
+    artifacts: type === 'dependency-resolution' ? extractArtifactCoordinates(lines) : [],
+    repositories: type === 'dependency-resolution' ? extractRepositoryUrls(text) : [],
+  };
+}
+
+function findSummaryLine(lines, patterns) {
+  return lines.find(line => patterns.some(pattern => pattern.test(line)))
+    || lines.find(line => line.includes('[ERROR]'))
+    || lines[0]
+    || 'Maven build failed';
+}
+
+function extractArtifactCoordinates(lines) {
+  const coordinates = [];
+  const coordinatePattern = /\b[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+){1,4}\b/g;
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const artifactLine = lower.includes('artifact')
+      || lower.includes('artifacts')
+      || lower.includes('failure to find')
+      || lower.includes('pom for')
+      || lower.includes('non-resolvable parent pom')
+      || lower.includes('plugin');
+
+    if (!artifactLine) continue;
+
+    for (const match of line.matchAll(coordinatePattern)) {
+      const value = match[0].replace(/[),.;:]+$/, '');
+      if (!coordinates.includes(value)) {
+        coordinates.push(value);
+      }
+    }
+  }
+
+  return coordinates;
+}
+
+function extractRepositoryUrls(text) {
+  const urls = [];
+  const urlPattern = /https?:\/\/[^\s)]+/g;
+
+  for (const match of String(text || '').matchAll(urlPattern)) {
+    const value = match[0].replace(/[),.;]+$/, '');
+    if (!urls.includes(value)) {
+      urls.push(value);
+    }
+  }
+
+  return urls;
+}
+
+function formatDependencyResolutionMessage({ command, root, status, failure }) {
+  const lines = [
+    'Maven 依赖解析失败，已停止当前任务，请人工排查依赖发布、仓库访问或版本坐标问题。',
+    `命令: ${command}`,
+    `项目: ${root}`,
+    `退出码: ${status}`,
+    `摘要: ${failure.summary}`,
+  ];
+
+  if (failure.artifacts.length > 0) {
+    lines.push(`缺失/异常依赖: ${failure.artifacts.join(', ')}`);
+  }
+  if (failure.repositories.length > 0) {
+    lines.push(`仓库线索: ${failure.repositories.join(', ')}`);
+  }
+
+  lines.push('不要自行修改 pom.xml、替换 jar、执行临时依赖修复或反复换参数重试。');
+  return lines.join('\n');
 }
 
 export function startJavaService(name, port, root, options = {}) {
@@ -280,7 +413,19 @@ function sleep(ms) {
 export function tailLog(name, lines = 20) {
   const logFile = getLogFile(name);
   if (!fs.existsSync(logFile)) return '';
-  const content = fs.readFileSync(logFile, 'utf8');
+  const stat = fs.statSync(logFile);
+  const bytesToRead = Math.min(stat.size, 1024 * 1024);
+  const fd = fs.openSync(logFile, 'r');
+  let content;
+
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    fs.readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+    content = buffer.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+
   const allLines = content.split('\n');
   return allLines.slice(-lines).join('\n');
 }
