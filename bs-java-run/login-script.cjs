@@ -85,7 +85,7 @@ function loadConfig(env = process.env, options = {}) {
 // ============ 登录函数 ============
 async function login(options = {}) {
   const config = loadConfig(options.env || process.env, options.configOptions || {});
-  const { headless = false, timeout = config.timeout } = options;
+  const { headless = false, timeout = config.timeout, emitOutput = false } = options;
 
   const browser = await chromium.launch({
     headless,
@@ -153,8 +153,9 @@ async function login(options = {}) {
         timestamp: new Date().toISOString(),
       };
 
-      // 输出到 stdout
-      console.log(JSON.stringify(result, null, 2));
+      if (emitOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      }
 
       await browser.close();
       return result;
@@ -169,7 +170,9 @@ async function login(options = {}) {
       timestamp: new Date().toISOString(),
     };
 
-    console.error(JSON.stringify(result, null, 2));
+    if (emitOutput) {
+      console.error(JSON.stringify(result, null, 2));
+    }
 
     await browser.close();
     throw error;
@@ -181,16 +184,9 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const headless = args.includes('--headless');
 
-  login({ headless })
+  login({ headless, emitOutput: true })
     .then(() => process.exit(0))
-    .catch((error) => {
-      console.error(JSON.stringify({
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      }, null, 2));
-      process.exit(1);
-    });
+    .catch(() => process.exit(1));
 }
 
 module.exports = { login, loadConfig, JAVARUN_MD, JAVARUN_LOCAL_MD };
