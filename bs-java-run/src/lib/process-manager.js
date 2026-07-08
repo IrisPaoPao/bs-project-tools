@@ -303,7 +303,6 @@ export function startJavaService(name, port, root, options = {}) {
   const logFile = getLogFile(name);
   const pidFile = getPidFile(name);
 
-  const commonJvmArgs = '-Dsaas.feign.context-path=';
   const nacosHostArg = nacosHost || config.nacosHost ? `-DNACOS_HOST=${nacosHost || config.nacosHost}` : '';
   const nacosNsArg = nacosNamespace || config.nacosNamespace ? `-DNACOS_NAMESPACE=${nacosNamespace || config.nacosNamespace}` : '';
 
@@ -316,7 +315,7 @@ export function startJavaService(name, port, root, options = {}) {
   ];
   if (nacosHostArg) args.push(nacosHostArg);
   if (nacosNsArg) args.push(nacosNsArg);
-  args.push(commonJvmArgs);
+  args.push(...(config.javaOpts || []));
   args.push('org.springframework.boot.loader.PropertiesLauncher');
 
   info(`启动 ${name} (端口 ${port}, Java: ${javaBin}) ...`);

@@ -9,6 +9,23 @@
 NACOS_HOST=172.18.163.52:30003
 NACOS_NAMESPACE=saas-industry-dev
 
+## JVM 参数
+
+每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。
+
+本地对账调用链路：
+- 全局 Feign path 使用真实环境前缀：`/saas-industry`
+- `saas-reconciliation-assembly-server` 路由到本地 `saas-data-gateway`：`http://127.0.0.1:81`
+- `saas-industry-assembly-server` 路由到远端行业网关：`http://172.18.163.52:30000`
+
+```jvm-opts
+-Dsaas.feign.context-path=/saas-industry
+-Dsaas-reconciliation-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-reconciliation-assembly-server.ribbon.listOfServers=http://127.0.0.1:81
+-Dsaas-industry-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-industry-assembly-server.ribbon.listOfServers=http://172.18.163.52:30000
+```
+
 ## 服务定义
 
 > 格式：`| 服务名 | 路径 | 端口 |`，端口为空的是基础组件，不参与本地启动。

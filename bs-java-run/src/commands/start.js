@@ -29,6 +29,12 @@ export async function start(serviceArg, options) {
   console.log(`  Nacos:       ${options.nacosHost || config.nacosHost || '（默认）'}`);
   console.log(`  Nacos 命名空间: ${options.nacosNamespace || config.nacosNamespace || '（默认）'}`);
   console.log(`  Java:        ${config.javaHome || '系统默认'}`);
+  if (config.javaOpts && config.javaOpts.length) {
+    console.log(`  JAVA_OPTS (${config.javaOpts.length}):`);
+    for (const opt of config.javaOpts) console.log(`    ${opt}`);
+  } else {
+    console.log(`  JAVA_OPTS:   （无）`);
+  }
   console.log(`  启动服务:    ${selection.serviceName}`);
   console.log(`  启动前构建:  ${options.build ? '是' : '否'}`);
   console.log(`  启动等待:    ${startupTimeoutSeconds}s`);

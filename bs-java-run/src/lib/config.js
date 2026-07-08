@@ -92,6 +92,20 @@ function parseServices(content) {
   return services.filter(s => s.port);
 }
 
+function parseJvmOptsBlock(content) {
+  const opts = [];
+  let inBlock = false;
+  for (const line of String(content || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^```jvm-opts\s*$/.test(t)) { inBlock = true; continue; }
+    if (inBlock) {
+      if (/^```/.test(t)) { inBlock = false; continue; }
+      if (t) opts.push(t);
+    }
+  }
+  return opts;
+}
+
 function parseLoginConfig(content, localContent = '') {
   return {
     loginUrl: readMergedTableValue(localContent, content, '登录地址'),
@@ -147,11 +161,15 @@ export function loadConfig(env = process.env, options = {}) {
     }
   }
 
+  const globalJvmOpts = parseJvmOptsBlock(content);
+  const localJvmOpts = parseJvmOptsBlock(localContent);
+
   return {
     services: parseServices(localContent).length > 0 ? parseServices(localContent) : parseServices(content),
     javaHome: env.BS_JAVA_HOME || javaHome,
     nacosHost: env.NACOS_HOST || nacosHost,
     nacosNamespace: env.NACOS_NAMESPACE || nacosNamespace,
+    javaOpts: env.JAVA_OPTS ? env.JAVA_OPTS.split(/\s+/).filter(Boolean) : (localJvmOpts.length > 0 ? localJvmOpts : globalJvmOpts),
     startupTimeoutSeconds: resolveStartupTimeoutSeconds(env.BS_STARTUP_TIMEOUT),
     login: parseLoginConfig(content, localContent),
     logDir: env.LOG_DIR || path.resolve(SCRIPT_DIR, '..', '..', 'logs'),

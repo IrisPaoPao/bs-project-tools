@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../../src/lib/config.js';
 
-function writeMarkdown(dir, name, loginRows) {
+function writeMarkdown(dir, name, loginRows, jvmOpts = []) {
   const file = path.join(dir, name);
   writeFileSync(file, `# JAVARUN.md
 
@@ -18,6 +18,12 @@ function writeMarkdown(dir, name, loginRows) {
 
 NACOS_HOST=base-host
 NACOS_NAMESPACE=base-ns
+
+## JVM 参数
+
+\`\`\`jvm-opts
+${jvmOpts.join('\n')}
+\`\`\`
 
 ## 服务定义
 
@@ -77,4 +83,34 @@ test('loadConfig uses a unified startup timeout for all services', () => {
 
   const envConfig = loadConfig({ BS_STARTUP_TIMEOUT: '600' }, { configFile: baseFile });
   assert.equal(envConfig.startupTimeoutSeconds, 600);
+});
+
+test('loadConfig reads JVM opts with local and env overrides', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-config-'));
+  const loginRows = [
+    '| 登录地址 |  |',
+    '| 主账号 |  |',
+    '| 用户名 |  |',
+    '| 密码 |  |',
+    '| 登录接口 | `POST /base/login` |'
+  ].join('\n');
+  const baseFile = writeMarkdown(dir, 'JAVARUN.md', loginRows, [
+    '-Dsaas.feign.context-path=/saas-industry',
+    '-Ddemo.ribbon.listOfServers=http://127.0.0.1:81',
+  ]);
+
+  const baseConfig = loadConfig({}, { configFile: baseFile });
+  assert.deepEqual(baseConfig.javaOpts, [
+    '-Dsaas.feign.context-path=/saas-industry',
+    '-Ddemo.ribbon.listOfServers=http://127.0.0.1:81',
+  ]);
+
+  const localFile = writeMarkdown(dir, 'JAVARUN.local.md', loginRows, [
+    '-Dlocal.only=true',
+  ]);
+  const localConfig = loadConfig({}, { configFile: baseFile, localConfigFile: localFile });
+  assert.deepEqual(localConfig.javaOpts, ['-Dlocal.only=true']);
+
+  const envConfig = loadConfig({ JAVA_OPTS: '-Dfrom.env=true -Xmx512m' }, { configFile: baseFile, localConfigFile: localFile });
+  assert.deepEqual(envConfig.javaOpts, ['-Dfrom.env=true', '-Xmx512m']);
 });
