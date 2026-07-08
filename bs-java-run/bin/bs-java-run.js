@@ -104,6 +104,7 @@ program
   .option('-l, --headless', '无头模式（后台运行）', false)
   .option('-t, --save-token <file>', '保存 token 到文件')
   .option('-q, --quiet', '只输出 token 字符串', false)
+  .option('--no-clipboard', '不自动复制 token 到剪贴板')
   .action(async (options) => {
     const code = await loginCommand(options);
     process.exit(code);
@@ -114,6 +115,7 @@ program
   .command('token')
   .description('查看缓存的 Token')
   .option('-q, --quiet', '只输出 token 字符串', false)
+  .option('--no-clipboard', '不自动复制 token 到剪贴板')
   .action(async (options) => {
     const code = await tokenCommand(options);
     process.exit(code);

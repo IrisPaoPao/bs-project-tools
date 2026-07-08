@@ -1,6 +1,19 @@
 import { createRequire } from 'module';
 import { saveToken, saveTokenToFile, loadToken } from '../lib/token-cache.js';
+import { copyToClipboard } from '../lib/clipboard.js';
 import { info, success, error, quietOutput } from '../lib/logger.js';
+
+// 默认把 token 复制到剪贴板（除非 --no-clipboard）。quiet 模式下静默复制，不打印提示。
+function maybeCopyToken(token, options) {
+  if (options.clipboard === false) return;
+  const ok = copyToClipboard(token);
+  if (options.quiet) return;
+  if (ok) {
+    success('Token 已复制到剪贴板');
+  } else {
+    error('复制到剪贴板失败（请手动复制）');
+  }
+}
 
 const require = createRequire(import.meta.url);
 const { login } = require('../../login-script.cjs');
@@ -28,6 +41,8 @@ export async function loginCommand(options) {
         console.log(JSON.stringify(result, null, 2));
       }
 
+      maybeCopyToken(result.token, options);
+
       return 0;
     } else {
       error('登录失败');
@@ -51,6 +66,8 @@ export async function tokenCommand(options) {
   } else {
     console.log(JSON.stringify({ token }, null, 2));
   }
+
+  maybeCopyToken(token, options);
 
   return 0;
 }

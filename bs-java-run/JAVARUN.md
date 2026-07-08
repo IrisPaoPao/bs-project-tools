@@ -14,12 +14,13 @@ NACOS_NAMESPACE=saas-industry-dev
 每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。
 
 本地对账调用链路：
-- 全局 Feign path 使用真实环境前缀：`/saas-industry`
-- `saas-reconciliation-assembly-server` 路由到本地 `saas-data-gateway`：`http://127.0.0.1:81`
-- `saas-industry-assembly-server` 路由到远端行业网关：`http://172.18.163.52:30000`
+- 所有本地服务统一使用 `/saas-industry` 作为服务端上下文路径和 Feign 调用前缀。
+- `saas-reconciliation-assembly-server` 路由到本地 `saas-data-gateway`：`http://127.0.0.1:81/saas-industry`
+- `saas-industry-assembly-server` 直接路由到远端行业网关：`http://172.18.163.52:30000/saas-industry`
 
 ```jvm-opts
 -Dsaas.feign.context-path=/saas-industry
+-Dserver.servlet.context-path=/saas-industry
 -Dsaas-reconciliation-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
 -Dsaas-reconciliation-assembly-server.ribbon.listOfServers=http://127.0.0.1:81
 -Dsaas-industry-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
@@ -69,3 +70,6 @@ NACOS_NAMESPACE=saas-industry-dev
 # 无头模式（后台运行）
 ./login.sh --headless
 ```
+
+> 💡 `login` 和 `token` 命令默认会把获取到的 Token **自动复制到剪贴板**，直接粘贴即可使用。
+> 如需关闭，加 `--no-clipboard`。`--quiet` 模式仍会复制，但不打印提示（方便管道使用）。
