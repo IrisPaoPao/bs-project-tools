@@ -40,15 +40,20 @@ bs-project-tools/
 
 ### 登录使用方式
 
+支持多环境、多账户，配置在 `bs-java-run/JAVARUN.md`（共享）或 `JAVARUN.local.md`（本机私有）的「登录环境」+「登录账户」表。
+
 ```bash
-# 有头模式（可看到浏览器）
+# 有头模式，交互选择账户
 cd bs-java-run && ./login.sh
 
-# 无头模式（后台运行）
-cd bs-java-run && ./login.sh --headless
+# 无头模式 + 指定账户
+cd bs-java-run && ./login.sh --headless --account dev-001
+
+# 快速获取 token（用上次账户，免交互，每次重新登录不缓存）
+cd bs-java-run && node bin/bs-java-run.js token --quiet
 ```
 
-登录成功后会输出 JWT Token，`authorization` 请求头直接使用（无需加 Bearer 前缀）。
+登录成功后会输出 JWT Token 并自动复制到剪贴板，`authorization` 请求头直接使用（无需加 Bearer 前缀）。
 
 > ⚠️ 登录接口参数经过前端加密，无法用 curl 明文调用，必须通过 Playwright 脚本。
 

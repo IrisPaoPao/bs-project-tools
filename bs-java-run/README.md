@@ -63,11 +63,12 @@ bs-java-run restart [service]   # 重启服务，不自动构建
 bs-java-run restart --yes --build
 bs-java-run status [service]    # 查看服务状态
 
-# 登录 & Token
-bs-java-run login               # 有头模式登录
-bs-java-run login --headless    # 无头模式登录
-bs-java-run login --quiet       # 只输出 token
-bs-java-run token --quiet       # 查看缓存的 token
+# 登录 & Token（多账户）
+bs-java-run login                       # 有头模式登录，交互选择账户
+bs-java-run login --account dev-001     # 指定账户
+bs-java-run login --headless --quiet    # 无头模式，只输出 token
+bs-java-run token                       # 重新 headless 登录获取 token（用上次账户，免交互）
+bs-java-run token --account prod-001    # 指定账户重新获取
 ```
 
 ## 配置
@@ -76,9 +77,10 @@ bs-java-run token --quiet       # 查看缓存的 token
 - Java 环境地址
 - Nacos 配置参数
 - 服务定义（服务名、路径、端口）
-- 登录配置（地址、账号、密码）
+- 登录环境（别名、登录地址、登录接口）
+- 登录账户（账户名、环境别名、主账号、用户名、密码）
 
-可选的本地覆盖文件为 `JAVARUN.local.md`，不会提交到仓库，适合放登录账号、密码等本机私有配置。环境变量优先级最高，其次是 `JAVARUN.local.md`，最后是 `JAVARUN.md`。
+可选的本地覆盖文件为 `JAVARUN.local.md`，不会提交到仓库，适合放登录账号、密码等本机私有配置。`JAVARUN.local.md` 中同名环境/账户会覆盖 `JAVARUN.md`。
 
 ## 环境变量
 
@@ -88,10 +90,6 @@ NACOS_HOST              # Nacos 主机地址
 NACOS_NAMESPACE         # Nacos 命名空间
 BS_JAVA_HOME            # Java 路径
 BS_LOGIN_TIMEOUT        # 登录超时时间（毫秒）
-BS_LOGIN_URL            # 登录地址
-BS_LOGIN_MAIN_ACCOUNT   # 主账号
-BS_LOGIN_USERNAME       # 用户名
-BS_LOGIN_PASSWORD       # 密码
 BS_STARTUP_TIMEOUT      # 服务启动等待超时时间，单位秒（默认 420）
 ```
 

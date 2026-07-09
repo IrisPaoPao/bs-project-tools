@@ -40,13 +40,28 @@ NACOS_NAMESPACE=saas-industry-dev
 
 ## 登录配置
 
+支持多环境、多账户。在 `JAVARUN.md`（共享模板）或 `JAVARUN.local.md`（本机私有，不提交仓库）中配置：
+
+### 登录环境
+
+> 格式：`| 别名 | 登录地址 | 登录接口 |`，账户通过「环境」列引用别名。
+
+| 别名 | 登录地址 | 登录接口 |
+|------|---------|---------|
+|  |  | POST /saas-industry/saas/identity/industry/privatizationLogin |
+
+### 登录账户
+
+> 格式：`| 账户名 | 环境 | 主账号 | 用户名 | 密码 |`，「环境」列填写上面定义的别名。
+
+| 账户名 | 环境 | 主账号 | 用户名 | 密码 |
+|--------|------|--------|--------|------|
+|  |  |  |  |  |
+
+### 固定行为
+
 | 配置项 | 值 |
 |--------|---|
-| 登录地址 |  |
-| 主账号 |  |
-| 用户名 |  |
-| 密码 |  |
-| 登录接口 | `POST /saas-industry/saas/identity/industry/privatizationLogin` |
 | Authorization 格式 | 直接使用 JWT Token，无 Bearer 前缀 |
 | Authorization 请求头 | `authorization: <token>` |
 | Token 来源 | 登录接口响应体 `response.token` 字段 |
@@ -64,12 +79,18 @@ NACOS_NAMESPACE=saas-industry-dev
 ### 使用方式
 
 ```bash
-# 有头模式（可看到浏览器）
+# 交互选择账户，有头模式（可看到浏览器）
 ./login.sh
+# 或：node bin/bs-java-run.js login
 
-# 无头模式（后台运行）
-./login.sh --headless
+# 指定账户 + 无头模式
+node bin/bs-java-run.js login --account dev-001 --headless
+
+# 获取 token（无缓存，每次重新 headless 登录，自动复制到剪贴板）
+node bin/bs-java-run.js token
+node bin/bs-java-run.js token --account dev-001 --quiet
 ```
 
 > 💡 `login` 和 `token` 命令默认会把获取到的 Token **自动复制到剪贴板**，直接粘贴即可使用。
 > 如需关闭，加 `--no-clipboard`。`--quiet` 模式仍会复制，但不打印提示（方便管道使用）。
+> `login` 默认有头模式；`token` 默认无头模式且不缓存，每次执行都重新登录。

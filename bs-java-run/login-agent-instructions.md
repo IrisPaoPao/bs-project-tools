@@ -6,23 +6,19 @@
 
 ## 登录参数
 
-| 参数 | 值 |
-|------|---|
-| 登录地址 | 通过 `BS_LOGIN_URL` 或 `JAVARUN.local.md` 配置 |
-| 主账号 | 通过 `BS_LOGIN_MAIN_ACCOUNT` 或 `JAVARUN.local.md` 配置 |
-| 用户名 | 通过 `BS_LOGIN_USERNAME` 或 `JAVARUN.local.md` 配置 |
-| 密码 | 通过 `BS_LOGIN_PASSWORD` 或 `JAVARUN.local.md` 配置 |
-
-## 登录方式
-
-### 推荐方式：使用共享 Node 登录脚本
-
-这是最稳定可靠的登录方式，无需处理前端加密和动态选择器。
+通过 `JAVARUN.md` / `JAVARUN.local.md` 的「登录环境」和「登录账户」表配置（支持多环境、多账户）。账户通过「环境」列引用环境别名。
 
 ```bash
+# 推荐：用共享脚本登录（交互选择账户，无头模式）
 cd /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run
 npm install
 ./login.sh --headless
+
+# 指定账户
+./login.sh --account dev-001 --headless
+
+# 快速获取 token（用上次账户，免交互）
+node bin/bs-java-run.js token --quiet
 ```
 
 脚本执行成功后会直接输出登录 Token，复制使用即可。

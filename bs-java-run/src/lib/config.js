@@ -106,16 +106,72 @@ function parseJvmOptsBlock(content) {
   return opts;
 }
 
+// 解析多列表格：按表头首列单元格定位表格，返回每行的单元格数组。
+// 遇到任何非表格行（空行、标题、正文）即结束当前表格。
+function parseMultiColumnTable(content, headerFirstCell) {
+  const rows = [];
+  const lines = String(content || '').split(/\r?\n/);
+  let inTable = false;
+
+  for (const line of lines) {
+    if (!line.trim().startsWith('|')) {
+      inTable = false;
+      continue;
+    }
+    const cells = line.split('|').slice(1, -1).map(stripMarkdownValue);
+    if (!inTable) {
+      if (cells[0] === headerFirstCell) inTable = true;
+      continue;
+    }
+    // 跳过分隔行 | --- | --- |
+    if (/^[\s-]+$/.test(cells.join(''))) continue;
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function parseLoginEnvironments(content) {
+  const rows = parseMultiColumnTable(content, '别名');
+  return rows
+    .map(cells => ({
+      name: cells[0],
+      loginUrl: cells[1] || '',
+      loginApi: (cells[2] || '').replace(/^[A-Z]+\s+/, ''),
+    }))
+    .filter(e => e.name);
+}
+
+function parseLoginAccounts(content) {
+  const rows = parseMultiColumnTable(content, '账户名');
+  return rows
+    .map(cells => ({
+      name: cells[0],
+      env: cells[1] || '',
+      mainAccount: cells[2] || '',
+      username: cells[3] || '',
+      password: cells[4] || '',
+    }))
+    .filter(a => a.name);
+}
+
+// 合并 global + local：按 name 去重，local 优先
+function mergeByName(globalList, localList) {
+  const map = new Map();
+  for (const item of globalList) map.set(item.name, item);
+  for (const item of localList) map.set(item.name, item);
+  return [...map.values()];
+}
+
 function parseLoginConfig(content, localContent = '') {
-  return {
-    loginUrl: readMergedTableValue(localContent, content, '登录地址'),
-    mainAccount: readMergedTableValue(localContent, content, '主账号'),
-    username: readMergedTableValue(localContent, content, '用户名'),
-    password: readMergedTableValue(localContent, content, '密码'),
-    loginApi: readMergedTableValue(localContent, content, '登录接口').replace(/^[A-Z]+\s+/, ''),
-    authorizationFormat: readMergedTableValue(localContent, content, 'Authorization 格式'),
-    tokenField: 'response.token',
-  };
+  const environments = mergeByName(
+    parseLoginEnvironments(content),
+    parseLoginEnvironments(localContent),
+  );
+  const accounts = mergeByName(
+    parseLoginAccounts(content),
+    parseLoginAccounts(localContent),
+  );
+  return { environments, accounts };
 }
 
 export function loadConfig(env = process.env, options = {}) {

@@ -23,18 +23,55 @@ function stripMarkdownValue(value) {
   return value.trim().replace(/^`|`$/g, '');
 }
 
-function readTableValue(content, key) {
-  for (const line of content.split(/\r?\n/)) {
-    if (!line.startsWith('|')) continue;
+// 解析多列表格：按表头首列单元格定位，返回每行单元格数组
+function parseMultiColumnTable(content, headerFirstCell) {
+  const rows = [];
+  const lines = String(content || '').split(/\r?\n/);
+  let inTable = false;
 
+  for (const line of lines) {
+    if (!line.trim().startsWith('|')) {
+      inTable = false;
+      continue;
+    }
     const cells = line.split('|').slice(1, -1).map(stripMarkdownValue);
-    if (cells[0] === key) return cells[1] || '';
+    if (!inTable) {
+      if (cells[0] === headerFirstCell) inTable = true;
+      continue;
+    }
+    if (/^[\s-]+$/.test(cells.join(''))) continue;
+    rows.push(cells);
   }
-  return '';
+  return rows;
 }
 
-function readMergedTableValue(primaryContent, fallbackContent, key) {
-  return readTableValue(primaryContent, key) || readTableValue(fallbackContent, key);
+function parseLoginEnvironments(content) {
+  return parseMultiColumnTable(content, '别名')
+    .map(cells => ({
+      name: cells[0],
+      loginUrl: cells[1] || '',
+      loginApi: (cells[2] || '').replace(/^[A-Z]+\s+/, ''),
+    }))
+    .filter(e => e.name);
+}
+
+function parseLoginAccounts(content) {
+  return parseMultiColumnTable(content, '账户名')
+    .map(cells => ({
+      name: cells[0],
+      env: cells[1] || '',
+      mainAccount: cells[2] || '',
+      username: cells[3] || '',
+      password: cells[4] || '',
+    }))
+    .filter(a => a.name);
+}
+
+function mergeByName(globalList, localList) {
+  const map = new Map();
+  for (const item of globalList) map.set(item.name, item);
+  for (const item of localList) map.set(item.name, item);
+  return [...map.values()];
 }
 
 function readConfigFile(filePath, required = true) {
@@ -48,17 +85,6 @@ function readConfigFile(filePath, required = true) {
   }
 }
 
-function requireValue(value, key) {
-  if (!value) {
-    throw new Error(`JAVARUN.md 缺少登录配置: ${key}`);
-  }
-  return value;
-}
-
-function loginPathFromMethodLine(value) {
-  return value.replace(/^[A-Z]+\s+/, '');
-}
-
 function loadConfig(env = process.env, options = {}) {
   const configFile = options.configFile || JAVARUN_MD;
   const localConfigFile = options.localConfigFile || path.join(path.dirname(configFile), 'JAVARUN.local.md');
@@ -70,22 +96,53 @@ function loadConfig(env = process.env, options = {}) {
     throw new Error(`BS_LOGIN_TIMEOUT 必须是正整数毫秒值: ${env.BS_LOGIN_TIMEOUT}`);
   }
 
-  const loginApi = env.BS_LOGIN_API || readMergedTableValue(localContent, content, '登录接口');
+  return {
+    environments: mergeByName(parseLoginEnvironments(content), parseLoginEnvironments(localContent)),
+    accounts: mergeByName(parseLoginAccounts(content), parseLoginAccounts(localContent)),
+    timeout,
+  };
+}
+
+// 根据账户名解析出完整登录配置；accountName 为空时用第一个账户
+function resolveAccount(config, accountName) {
+  if (config.accounts.length === 0) {
+    throw new Error('JAVARUN.md / JAVARUN.local.md 未配置任何登录账户（## 登录账户 表）');
+  }
+  const account = accountName
+    ? config.accounts.find(a => a.name === accountName)
+    : config.accounts[0];
+  if (!account) {
+    const available = config.accounts.map(a => a.name).join(', ');
+    throw new Error(`未找到登录账户: ${accountName}\n可用账户: ${available}`);
+  }
+  const env = config.environments.find(e => e.name === account.env);
+  if (!env) {
+    throw new Error(`账户 "${account.name}" 引用的环境 "${account.env}" 不存在，请在 ## 登录环境 表中定义`);
+  }
+  if (!env.loginUrl) throw new Error(`环境 "${env.name}" 缺少登录地址`);
+  if (!env.loginApi) throw new Error(`环境 "${env.name}" 缺少登录接口`);
+  if (!account.mainAccount) throw new Error(`账户 "${account.name}" 缺少主账号`);
+  if (!account.username) throw new Error(`账户 "${account.name}" 缺少用户名`);
+  if (!account.password) throw new Error(`账户 "${account.name}" 缺少密码`);
 
   return {
-    loginUrl: requireValue(env.BS_LOGIN_URL || readMergedTableValue(localContent, content, '登录地址'), '登录地址'),
-    mainAccount: requireValue(env.BS_LOGIN_MAIN_ACCOUNT || readMergedTableValue(localContent, content, '主账号'), '主账号'),
-    username: requireValue(env.BS_LOGIN_USERNAME || readMergedTableValue(localContent, content, '用户名'), '用户名'),
-    password: requireValue(env.BS_LOGIN_PASSWORD || readMergedTableValue(localContent, content, '密码'), '密码'),
-    loginApiPath: requireValue(loginPathFromMethodLine(loginApi), '登录接口'),
-    timeout,
+    accountName: account.name,
+    envName: env.name,
+    loginUrl: env.loginUrl,
+    loginApiPath: env.loginApi,
+    mainAccount: account.mainAccount,
+    username: account.username,
+    password: account.password,
+    timeout: config.timeout,
   };
 }
 
 // ============ 登录函数 ============
 async function login(options = {}) {
   const config = loadConfig(options.env || process.env, options.configOptions || {});
-  const { headless = false, timeout = config.timeout, emitOutput = false } = options;
+  // options.account 可为账户名字符串；不传则用第一个账户
+  const resolved = resolveAccount(config, typeof options.account === 'string' ? options.account : null);
+  const { headless = false, timeout = resolved.timeout, emitOutput = false } = options;
 
   const browser = await chromium.launch({
     headless,
@@ -104,7 +161,7 @@ async function login(options = {}) {
   // 监听登录接口响应
   page.on('response', async (response) => {
     const url = response.url();
-    if (url.includes(config.loginApiPath)) {
+    if (url.includes(resolved.loginApiPath)) {
       try {
         loginResponse = await response.json();
       } catch (e) {
@@ -115,22 +172,22 @@ async function login(options = {}) {
 
   try {
     // 第 1 步：打开登录页
-    await page.goto(config.loginUrl, { waitUntil: 'networkidle', timeout });
+    await page.goto(resolved.loginUrl, { waitUntil: 'networkidle', timeout });
 
     // 第 2 步：填写主账号
     const mainAccountInput = page.locator('input[placeholder="请输入您的主账号"]');
     await mainAccountInput.click();
-    await mainAccountInput.fill(config.mainAccount);
+    await mainAccountInput.fill(resolved.mainAccount);
 
     // 第 3 步：填写用户名
     const usernameInput = page.locator('input[placeholder="请输入您的用户名"]');
     await usernameInput.click();
-    await usernameInput.fill(config.username);
+    await usernameInput.fill(resolved.username);
 
     // 第 4 步：填写密码
     const passwordInput = page.locator('input[placeholder="请输入您的密码"]');
     await passwordInput.click();
-    await passwordInput.fill(config.password);
+    await passwordInput.fill(resolved.password);
 
     // 第 5 步：点击登录按钮
     const loginButton = page.locator('button.login-btn');
@@ -146,6 +203,8 @@ async function login(options = {}) {
     if (loginResponse && loginResponse.token) {
       const result = {
         success: true,
+        account: resolved.accountName,
+        env: resolved.envName,
         token: loginResponse.token,
         authorization: loginResponse.token,
         lastLoginTime: loginResponse.lastLoginTime,
@@ -162,10 +221,12 @@ async function login(options = {}) {
     } else {
       throw new Error('未能获取到登录 Token');
     }
-  } catch (error) {
+  } catch (err) {
     const result = {
       success: false,
-      error: error.message,
+      account: resolved.accountName,
+      env: resolved.envName,
+      error: err.message,
       pageUrl: page.url(),
       timestamp: new Date().toISOString(),
     };
@@ -175,7 +236,7 @@ async function login(options = {}) {
     }
 
     await browser.close();
-    throw error;
+    throw err;
   }
 }
 
@@ -184,9 +245,16 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const headless = args.includes('--headless');
 
-  login({ headless, emitOutput: true })
+  // 支持 --account <name>
+  let account = null;
+  const accountIdx = args.indexOf('--account');
+  if (accountIdx !== -1 && args[accountIdx + 1]) {
+    account = args[accountIdx + 1];
+  }
+
+  login({ account, headless, emitOutput: true })
     .then(() => process.exit(0))
     .catch(() => process.exit(1));
 }
 
-module.exports = { login, loadConfig, JAVARUN_MD, JAVARUN_LOCAL_MD };
+module.exports = { login, loadConfig, resolveAccount, JAVARUN_MD, JAVARUN_LOCAL_MD };

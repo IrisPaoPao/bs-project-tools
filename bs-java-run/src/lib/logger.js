@@ -96,6 +96,37 @@ export async function interactiveSelect(items, prompt = '请选择') {
   });
 }
 
+// 交互式选择（单项，无“全部”选项）。items: [{ label, value }]
+export async function selectOne(items, prompt = '请选择') {
+  if (typeof process === 'undefined' || !process.stdin.isTTY) {
+    throw new Error('非交互式终端，无法选择');
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    console.log(`  ${i + 1}) ${items[i].label}`);
+  }
+  console.log('  q) 退出');
+  console.log('');
+
+  return new Promise((resolve) => {
+    process.stdout.write(`${prompt}: `);
+    process.stdin.once('data', (data) => {
+      const choice = data.toString().trim();
+      if (choice === 'q' || choice === 'Q') {
+        console.log('已取消');
+        process.exit(0);
+      }
+      const idx = parseInt(choice, 10);
+      if (idx >= 1 && idx <= items.length) {
+        resolve(items[idx - 1].value);
+      } else {
+        console.log('无效选择');
+        resolve(selectOne(items, prompt));
+      }
+    });
+  });
+}
+
 export function jsonOutput(data) {
   console.log(JSON.stringify(data, null, 2));
 }

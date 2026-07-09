@@ -100,7 +100,8 @@ program
 // login 命令
 program
   .command('login')
-  .description('登录获取 Authorization Token')
+  .description('登录获取 Authorization Token（多账户）')
+  .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-l, --headless', '无头模式（后台运行）', false)
   .option('-t, --save-token <file>', '保存 token 到文件')
   .option('-q, --quiet', '只输出 token 字符串', false)
@@ -110,12 +111,14 @@ program
     process.exit(code);
   });
 
-// token 命令
+// token 命令（无缓存，每次重新 headless 登录获取）
 program
   .command('token')
-  .description('查看缓存的 Token')
+  .description('获取 Authorization Token（每次重新登录，不缓存）')
+  .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-q, --quiet', '只输出 token 字符串', false)
   .option('--no-clipboard', '不自动复制 token 到剪贴板')
+  .option('--no-headless', '显示浏览器窗口（默认无头）')
   .action(async (options) => {
     const code = await tokenCommand(options);
     process.exit(code);
