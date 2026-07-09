@@ -43,6 +43,47 @@ export function removePidFile(name) {
   }
 }
 
+/**
+ * 删除指定服务的当前日志文件 <name>.log。
+ * 返回是否真的删除了文件。
+ */
+export function removeServiceLog(name) {
+  const logFile = getLogFile(name);
+  if (fs.existsSync(logFile)) {
+    fs.unlinkSync(logFile);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 清理历史日志：归档目录 archive/、*.bak 备份、按时间戳轮转的日志文件。
+ * 保留正在使用的 <name>.log 与 <name>.pid。
+ * 返回被删除条目名称列表。
+ */
+export function cleanHistoricalLogs() {
+  const logDir = getLogDir();
+  if (!fs.existsSync(logDir)) return [];
+
+  const removed = [];
+
+  const archiveDir = path.join(logDir, 'archive');
+  if (fs.existsSync(archiveDir)) {
+    fs.rmSync(archiveDir, { recursive: true, force: true });
+    removed.push('archive/');
+  }
+
+  for (const entry of fs.readdirSync(logDir)) {
+    // 备份文件（xxx.log.bak.2026...）或按时间戳轮转的日志（xxx.20260703104018.log）
+    if (/\.bak(\.|$)/.test(entry) || /\.\d{8,}\.log$/.test(entry)) {
+      fs.rmSync(path.join(logDir, entry), { force: true });
+      removed.push(entry);
+    }
+  }
+
+  return removed;
+}
+
 export function checkPort(port) {
   try {
     execSync(`lsof -i :${port} -sTCP:LISTEN`, { stdio: 'ignore' });

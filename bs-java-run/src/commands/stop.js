@@ -8,6 +8,8 @@ import {
   waitProcessExit,
   readPidFile,
   removePidFile,
+  cleanHistoricalLogs,
+  removeServiceLog,
 } from '../lib/process-manager.js';
 import {
   header,
@@ -113,6 +115,16 @@ export async function stop(serviceArg, options) {
     if (!ok) {
       return 1;
     }
+  }
+
+  // 停止后清理日志：历史归档/备份 + 本次运行产生的当前日志
+  const removedHistory = cleanHistoricalLogs();
+  let removedCurrent = 0;
+  for (const service of selectedServices) {
+    if (removeServiceLog(service.name)) removedCurrent++;
+  }
+  if (removedHistory.length || removedCurrent) {
+    info(`清理日志: 归档/备份 ${removedHistory.length} 项, 本次日志 ${removedCurrent} 个`);
   }
 
   console.log('');

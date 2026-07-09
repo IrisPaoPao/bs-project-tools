@@ -6,6 +6,8 @@ import {
   buildService,
   DependencyResolutionError,
   ensureLogDir,
+  cleanHistoricalLogs,
+  removeServiceLog,
 } from '../lib/process-manager.js';
 import { selectServices } from '../lib/service-selector.js';
 import {
@@ -56,6 +58,16 @@ export async function start(serviceArg, options) {
     }
   }
   success('端口检查通过');
+
+  // 启动前清理历史日志：归档/备份/轮转日志 + 本次要启动服务的旧日志
+  const removedHistory = cleanHistoricalLogs();
+  let removedCurrent = 0;
+  for (const service of selectedServices) {
+    if (removeServiceLog(service.name)) removedCurrent++;
+  }
+  if (removedHistory.length || removedCurrent) {
+    info(`清理历史日志: 归档/备份 ${removedHistory.length} 项, 旧日志 ${removedCurrent} 个`);
+  }
 
   // 2. 构建
   if (options.build) {
