@@ -1,0 +1,2 @@
+[console_scripts]
+bsq-jira = jira_cli.main:cli
