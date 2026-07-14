@@ -1,0 +1,15 @@
+{
+    "default_server": "saas-jenkins",
+    "servers": {
+        "saas-jenkins": {
+            "url": "http://172.18.159.8/",
+            "username": "your_username",
+            "password": "bsyy123456."
+        },
+        "tax-jenkins": {
+            "url": "http://172.18.121.207:8081/",
+            "username": "your_username",
+            "password": "your_password"
+        }
+    }
+}
