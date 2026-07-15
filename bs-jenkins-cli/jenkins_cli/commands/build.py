@@ -43,14 +43,13 @@ def build_cmd(ctx, job_name, wait, param):
             return
             
     console.print(f"[green]✅ 成功触发任务 '{job_name}'[/green]")
-    if queue_url:
-        console.print(f"队列信息: [blue]{queue_url}[/blue]")
-        
     if not wait:
         return
         
-    if not queue_url:
-        console.print("[yellow]⚠️ 无法获取构建队列 URL，无法跟踪构建进度。[/yellow]")
+    if queue_url:
+        console.print(f"队列信息: [blue]{queue_url}[/blue]")
+    else:
+        console.print("[yellow]⚠️ 无法获取构建队列 URL，无法跟踪构建进度（若是扫描多分支流水线则属正常现象）。[/yellow]")
         return
         
     # 等待队列分配构建号
