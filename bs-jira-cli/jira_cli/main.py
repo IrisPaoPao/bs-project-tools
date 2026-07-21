@@ -25,6 +25,7 @@ from jira_cli.commands.issue import issue_group
 from jira_cli.commands.search import search_command
 from jira_cli.commands.comment import comment_group
 from jira_cli.commands.alias import alias_group
+from jira_cli.commands.attachment import attachment_group
 
 
 # ──────────────────────────────────────────────
@@ -156,6 +157,7 @@ cli.add_command(issue_group)
 cli.add_command(search_command)
 cli.add_command(comment_group)
 cli.add_command(alias_group)
+cli.add_command(attachment_group)
 
 
 # ──────────────────────────────────────────────

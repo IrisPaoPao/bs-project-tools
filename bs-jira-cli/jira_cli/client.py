@@ -4,6 +4,9 @@
 适配 Jira v6.0.5。
 """
 
+import os
+import re
+import urllib.parse
 import requests
 
 
@@ -345,5 +348,56 @@ class JiraClient:
     # ──────────────────────────────────────────────
 
     def get_statuses(self) -> list:
-        """获取所有状态"""
+        """获取所有可用状态"""
         return self._request("GET", "/status")
+
+    def download_attachment(self, url: str, dest_dir: str = ".") -> str:
+        """下载附件到指定目录
+        
+        Args:
+            url: 附件下载 URL
+            dest_dir: 保存目录
+            
+        Returns:
+            str: 下载后的文件绝对路径
+        """
+        self._login()
+        
+        try:
+            # 流式下载避免内存占用过大
+            with self.session.get(url, stream=True, timeout=300) as resp:
+                if resp.status_code >= 400:
+                    raise JiraAPIError(resp.status_code, f"附件下载失败: {resp.text}", url)
+                
+                # 尝试从 Header 获取文件名
+                filename = ""
+                content_disposition = resp.headers.get("Content-Disposition", "")
+                if content_disposition:
+                    # 例如: attachment; filename="测试.png"; filename*=UTF-8''%E6%B5%8B%E8%AF%95.png
+                    match = re.search(r"filename\*=UTF-8''(.+)", content_disposition)
+                    if match:
+                        filename = urllib.parse.unquote(match.group(1))
+                    else:
+                        match = re.search(r'filename="([^"]+)"', content_disposition)
+                        if match:
+                            filename = urllib.parse.unquote(match.group(1))
+                
+                # 如果没拿到，从 URL 提取
+                if not filename:
+                    parsed_url = urllib.parse.urlparse(url)
+                    filename = os.path.basename(parsed_url.path) or "attachment_download"
+                    filename = urllib.parse.unquote(filename)
+                
+                os.makedirs(dest_dir, exist_ok=True)
+                dest_path = os.path.join(dest_dir, filename)
+                
+                # 写入文件
+                with open(dest_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            
+                return os.path.abspath(dest_path)
+                
+        except requests.RequestException as e:
+            raise JiraAPIError(0, f"下载请求异常: {str(e)}", url)
