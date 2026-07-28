@@ -154,6 +154,19 @@ function parseLoginAccounts(content) {
     .filter(a => a.name);
 }
 
+function parseRuntimeProfiles(content) {
+  const rows = parseMultiColumnTable(content, '运行环境');
+  return rows
+    .map(cells => ({
+      name: cells[0],
+      nacosHost: cells[1] || '',
+      nacosNamespace: cells[2] || '',
+      feignContextPath: cells[3] || '',
+      serverContextPath: cells[4] || '',
+    }))
+    .filter(profile => profile.name);
+}
+
 // 合并 global + local：按 name 去重，local 优先
 function mergeByName(globalList, localList) {
   const map = new Map();
@@ -172,6 +185,14 @@ function parseLoginConfig(content, localContent = '') {
     parseLoginAccounts(localContent),
   );
   return { environments, accounts };
+}
+
+function overrideJvmOption(options, property, value) {
+  if (!value) return options;
+  const prefix = `-D${property}=`;
+  const next = options.filter(option => !option.startsWith(prefix));
+  next.push(`${prefix}${value}`);
+  return next;
 }
 
 export function loadConfig(env = process.env, options = {}) {
@@ -219,15 +240,32 @@ export function loadConfig(env = process.env, options = {}) {
 
   const globalJvmOpts = parseJvmOptsBlock(content);
   const localJvmOpts = parseJvmOptsBlock(localContent);
+  const runtimeProfiles = mergeByName(
+    parseRuntimeProfiles(content),
+    parseRuntimeProfiles(localContent),
+  );
+  const profileName = env.BS_JAVARUN_PROFILE || '';
+  const runtimeProfile = profileName ? runtimeProfiles.find(profile => profile.name === profileName) : null;
+  if (profileName && !runtimeProfile) {
+    const available = runtimeProfiles.map(profile => profile.name).join(', ');
+    throw new Error(`未知运行环境: ${profileName}${available ? `，可用环境: ${available}` : ''}`);
+  }
+  let javaOpts = env.JAVA_OPTS ? env.JAVA_OPTS.split(/\s+/).filter(Boolean) : (localJvmOpts.length > 0 ? localJvmOpts : globalJvmOpts);
+  if (!env.JAVA_OPTS && runtimeProfile) {
+    javaOpts = overrideJvmOption(javaOpts, 'saas.feign.context-path', runtimeProfile.feignContextPath);
+    javaOpts = overrideJvmOption(javaOpts, 'server.servlet.context-path', runtimeProfile.serverContextPath);
+  }
 
   return {
     services: parseServices(localContent).length > 0 ? parseServices(localContent) : parseServices(content),
     javaHome: env.BS_JAVA_HOME || javaHome,
-    nacosHost: env.NACOS_HOST || nacosHost,
-    nacosNamespace: env.NACOS_NAMESPACE || nacosNamespace,
-    javaOpts: env.JAVA_OPTS ? env.JAVA_OPTS.split(/\s+/).filter(Boolean) : (localJvmOpts.length > 0 ? localJvmOpts : globalJvmOpts),
+    nacosHost: env.NACOS_HOST || (runtimeProfile && runtimeProfile.nacosHost) || nacosHost,
+    nacosNamespace: env.NACOS_NAMESPACE || (runtimeProfile && runtimeProfile.nacosNamespace) || nacosNamespace,
+    javaOpts,
     startupTimeoutSeconds: resolveStartupTimeoutSeconds(env.BS_STARTUP_TIMEOUT),
     login: parseLoginConfig(content, localContent),
+    runtimeProfiles,
+    profileName,
     logDir: env.LOG_DIR || path.resolve(SCRIPT_DIR, '..', '..', 'logs'),
   };
 }

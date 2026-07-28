@@ -24,6 +24,13 @@ program
   .description('BS Java 服务运行管理 CLI 工具')
   .version(packageJson.version, '-v, --version');
 
+program.option('-P, --profile <name>', '选择 JAVARUN.local.md 中的命名运行环境');
+
+program.hook('preAction', command => {
+  const profile = command.optsWithGlobals().profile;
+  if (profile) process.env.BS_JAVARUN_PROFILE = profile;
+});
+
 // start 命令
 program
   .command('start [service]')
@@ -101,6 +108,7 @@ program
 program
   .command('login')
   .description('登录获取 Authorization Token（多账户）')
+  .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-l, --headless', '无头模式（后台运行）', false)
   .option('-t, --save-token <file>', '保存 token 到文件')
@@ -115,6 +123,7 @@ program
 program
   .command('token')
   .description('获取 Authorization Token（每次重新登录，不缓存）')
+  .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-q, --quiet', '只输出 token 字符串', false)
   .option('--no-clipboard', '不自动复制 token 到剪贴板')

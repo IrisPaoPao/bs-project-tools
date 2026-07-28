@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -113,4 +113,40 @@ test('loadConfig reads JVM opts with local and env overrides', () => {
 
   const envConfig = loadConfig({ JAVA_OPTS: '-Dfrom.env=true -Xmx512m' }, { configFile: baseFile, localConfigFile: localFile });
   assert.deepEqual(envConfig.javaOpts, ['-Dfrom.env=true', '-Xmx512m']);
+});
+
+test('loadConfig applies a named runtime profile without changing the default environment', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-config-'));
+  const loginRows = [
+    '| 登录地址 |  |',
+    '| 主账号 |  |',
+    '| 用户名 |  |',
+    '| 密码 |  |',
+    '| 登录接口 | `POST /base/login` |'
+  ].join('\n');
+  const baseFile = writeMarkdown(dir, 'JAVARUN.md', loginRows, [
+    '-Dsaas.feign.context-path=/saas-industry',
+    '-Dserver.servlet.context-path=/saas-industry',
+  ]);
+  const localFile = writeMarkdown(dir, 'JAVARUN.local.md', loginRows);
+  writeFileSync(localFile, `${readFileSync(localFile, 'utf8')}
+## 运行环境
+
+| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 |
+|----------|------------|----------------|--------------|--------------|
+| zhsf-test | test-host:30050 | test-ns | test-industry-02 | /test-industry-02 |
+`);
+
+  const defaultConfig = loadConfig({}, { configFile: baseFile, localConfigFile: localFile });
+  assert.equal(defaultConfig.nacosHost, 'base-host');
+  assert.deepEqual(defaultConfig.javaOpts.slice(0, 2), [
+    '-Dsaas.feign.context-path=/saas-industry',
+    '-Dserver.servlet.context-path=/saas-industry',
+  ]);
+
+  const profileConfig = loadConfig({ BS_JAVARUN_PROFILE: 'zhsf-test' }, { configFile: baseFile, localConfigFile: localFile });
+  assert.equal(profileConfig.nacosHost, 'test-host:30050');
+  assert.equal(profileConfig.nacosNamespace, 'test-ns');
+  assert.ok(profileConfig.javaOpts.includes('-Dsaas.feign.context-path=test-industry-02'));
+  assert.ok(profileConfig.javaOpts.includes('-Dserver.servlet.context-path=/test-industry-02'));
 });

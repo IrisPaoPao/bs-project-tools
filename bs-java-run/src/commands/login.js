@@ -19,34 +19,49 @@ function maybeCopyToken(token, options) {
 const require = createRequire(import.meta.url);
 const { login } = require('../../login-script.cjs');
 
+export function filterAccountsByEnvironment(accounts, environments, environmentName) {
+  if (!environmentName) return accounts;
+  if (!environments.some(environment => environment.name === environmentName)) {
+    const available = environments.map(environment => environment.name).join(', ');
+    throw new Error(`未找到登录环境: ${environmentName}${available ? `\n可用环境: ${available}` : ''}`);
+  }
+  const matched = accounts.filter(account => account.env === environmentName);
+  if (matched.length === 0) {
+    throw new Error(`登录环境 "${environmentName}" 未配置登录账户`);
+  }
+  return matched;
+}
+
 // 选择登录账户：--account 指定则直接用；
 // preferLast=true（token 命令）时优先用上次账户，不交互；
 // 否则交互选择（标记上次使用的账户）
 async function resolveAccountName(options, { preferLast = false } = {}) {
   const { accounts, environments } = getConfig().login;
-  if (accounts.length === 0) {
+  const scopedAccounts = filterAccountsByEnvironment(accounts, environments, options.env);
+  if (scopedAccounts.length === 0) {
     throw new Error('未配置任何登录账户，请在 JAVARUN.md / JAVARUN.local.md 的 ## 登录账户 表中添加');
   }
   if (options.account) {
-    const found = accounts.find(a => a.name === options.account);
+    const found = scopedAccounts.find(a => a.name === options.account);
     if (!found) {
-      const available = accounts.map(a => a.name).join(', ');
-      throw new Error(`未找到账户: ${options.account}\n可用账户: ${available}`);
+      const available = scopedAccounts.map(a => a.name).join(', ');
+      const scope = options.env ? `（登录环境: ${options.env}）` : '';
+      throw new Error(`未找到账户${scope}: ${options.account}\n可用账户: ${available}`);
     }
     return options.account;
   }
   // token 命令：优先用上次账户，免交互
   if (preferLast) {
     const last = loadLastAccount();
-    if (last && accounts.find(a => a.name === last)) {
+    if (last && scopedAccounts.find(a => a.name === last)) {
       return last;
     }
     // 没有上次记录则用第一个账户（保证非交互场景可用）
-    return accounts[0].name;
+    return scopedAccounts[0].name;
   }
   // login 命令：交互选择
   const last = loadLastAccount();
-  const items = accounts.map(a => {
+  const items = scopedAccounts.map(a => {
     const env = environments.find(e => e.name === a.env);
     const envLabel = env ? a.env : `${a.env}（环境未定义）`;
     const mark = a.name === last ? '  [上次]' : '';
@@ -57,7 +72,9 @@ async function resolveAccountName(options, { preferLast = false } = {}) {
 
 async function doLogin(options, { headless, preferLast = false }) {
   const accountName = await resolveAccountName(options, { preferLast });
-  info(`登录账户: ${accountName}`);
+  if (!options.quiet) {
+    info(`登录账户: ${accountName}`);
+  }
 
   const result = await login({ account: accountName, headless });
 

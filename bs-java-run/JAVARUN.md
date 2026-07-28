@@ -11,12 +11,28 @@ NACOS_NAMESPACE=saas-industry-dev
 
 ## JVM 参数
 
-每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。
+每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。`JAVARUN.local.md` 可配置多个“运行环境”；使用 `--profile <别名>` 时，仅覆盖该环境的 Nacos、Feign 上下文和服务端上下文，默认环境不受影响。
+
+运行环境配置写在 `JAVARUN.local.md`，格式如下：
+
+```markdown
+## 运行环境
+
+| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 |
+|----------|------------|----------------|--------------|--------------|
+| zhsf-test-industry-02 | 172.18.166.122:30050 | test-industry-02-zhsf-wzd | test-industry-02 | /test-industry-02 |
+```
+
+使用示例：`bs-java-run --profile zhsf-test-industry-02 restart saas-zhsf-business --yes`。也可设置 `BS_JAVARUN_PROFILE=zhsf-test-industry-02`；`NACOS_HOST`、`NACOS_NAMESPACE`、`JAVA_OPTS` 仍具有更高优先级。
 
 本地对账调用链路：
 - 所有本地服务统一使用 `/saas-industry` 作为服务端上下文路径和 Feign 调用前缀。
 - `saas-reconciliation-assembly-server` 路由到本地 `saas-data-gateway`：`http://127.0.0.1:81/saas-industry`
 - `saas-industry-assembly-server` 直接路由到远端行业网关：`http://172.18.163.52:30000/saas-industry`
+
+本地综合收费调用链路：
+- `saas-zhsf-voucher-adapter-server` 路由到本地 `saas-zhsf-base-server`：`http://127.0.0.1:18080/saas-industry`。
+- `saas-zhsf-business-server` 路由到本地 `saas-zhsf-voucher-adapter-server`：`http://127.0.0.1:18081/saas-industry`。
 
 ```jvm-opts
 -Dsaas.feign.context-path=/saas-industry
@@ -25,6 +41,16 @@ NACOS_NAMESPACE=saas-industry-dev
 -Dsaas-reconciliation-assembly-server.ribbon.listOfServers=http://127.0.0.1:81
 -Dsaas-industry-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
 -Dsaas-industry-assembly-server.ribbon.listOfServers=http://172.18.163.52:30000
+-Dsaas-industry-basic-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-industry-basic-server.ribbon.listOfServers=http://172.18.163.52:30000
+-Dsaas-basic-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-basic-server.ribbon.listOfServers=http://172.18.163.52:30000
+-Dsaas-user-center-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-user-center-server.ribbon.listOfServers=http://172.18.163.52:30000
+-Dsaas-zhsf-base-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-zhsf-base-server.ribbon.listOfServers=http://127.0.0.1:18080
+-Dsaas-zhsf-voucher-adapter-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
+-Dsaas-zhsf-voucher-adapter-server.ribbon.listOfServers=http://127.0.0.1:18081
 ```
 
 ## 服务定义
@@ -36,6 +62,9 @@ NACOS_NAMESPACE=saas-industry-dev
 | `saas-reconciliation-business` | `/Users/zhangzhengqing/work/project/vasService/saas-reconciliation-business/` | 82 |
 | `saas-data-gateway` | `/Users/zhangzhengqing/work/project/vasService/saas-data-gateway/` | 81 |
 | `saas-ybld-rpa` | `/Users/zhangzhengqing/work/project/vasService/saas-ybld-rpa/` | 83 |
+| `saas-zhsf-base` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-base/` | 18080 |
+| `saas-zhsf-voucher-adapter` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-voucher-adapter/` | 18081 |
+| `saas-zhsf-business` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-business/` | 18082 |
 
 
 ## 登录配置
@@ -64,7 +93,7 @@ NACOS_NAMESPACE=saas-industry-dev
 |--------|---|
 | Authorization 格式 | 直接使用 JWT Token，无 Bearer 前缀 |
 | Authorization 请求头 | `authorization: <token>` |
-| Token 来源 | 登录接口响应体 `response.token` 字段 |
+| Token 来源 | 登录接口响应体 `authorization` 字段（兼容历史 `token` 字段） |
 
 > ⚠️ **重要**：登录接口的请求参数（用户名、主账号、密码）经过前端加密传输，无法直接用 curl 明文调用。必须通过 Playwright 脚本模拟浏览器操作来完成登录。
 
@@ -89,8 +118,11 @@ node bin/bs-java-run.js login --account dev-001 --headless
 # 获取 token（无缓存，每次重新 headless 登录，自动复制到剪贴板）
 node bin/bs-java-run.js token
 node bin/bs-java-run.js token --account dev-001 --quiet
+node bin/bs-java-run.js token --env 52test --account dev-001 --quiet
+node bin/bs-java-run.js token --env test-industry-02 --account test-zhsf-001 --quiet
 ```
 
 > 💡 `login` 和 `token` 命令默认会把获取到的 Token **自动复制到剪贴板**，直接粘贴即可使用。
 > 如需关闭，加 `--no-clipboard`。`--quiet` 模式仍会复制，但不打印提示（方便管道使用）。
 > `login` 默认有头模式；`token` 默认无头模式且不缓存，每次执行都重新登录。
+> `--env` 选择“登录环境”表中的地址和账户范围；`--profile` 选择本地 Java 服务的 Nacos/JVM 运行环境，二者可组合使用。

@@ -137,6 +137,19 @@ function resolveAccount(config, accountName) {
   };
 }
 
+function extractLoginToken(response) {
+  if (!response || typeof response !== 'object') return null;
+  return response.authorization
+    || response.response?.authorization
+    || response.data?.authorization
+    || response.result?.authorization
+    || response.token
+    || response.response?.token
+    || response.data?.token
+    || response.result?.token
+    || null;
+}
+
 // ============ 登录函数 ============
 async function login(options = {}) {
   const config = loadConfig(options.env || process.env, options.configOptions || {});
@@ -200,14 +213,15 @@ async function login(options = {}) {
     await page.waitForTimeout(1000);
 
     // 从监听到的登录响应中获取 token
-    if (loginResponse && loginResponse.token) {
+    const token = extractLoginToken(loginResponse);
+    if (token) {
       const result = {
         success: true,
         account: resolved.accountName,
         env: resolved.envName,
-        token: loginResponse.token,
-        authorization: loginResponse.token,
-        lastLoginTime: loginResponse.lastLoginTime,
+        token,
+        authorization: token,
+        lastLoginTime: loginResponse.lastLoginTime || loginResponse.response?.lastLoginTime || loginResponse.data?.lastLoginTime || loginResponse.result?.lastLoginTime,
         pageUrl: page.url(),
         timestamp: new Date().toISOString(),
       };
@@ -257,4 +271,4 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
-module.exports = { login, loadConfig, resolveAccount, JAVARUN_MD, JAVARUN_LOCAL_MD };
+module.exports = { login, loadConfig, resolveAccount, extractLoginToken, JAVARUN_MD, JAVARUN_LOCAL_MD };
