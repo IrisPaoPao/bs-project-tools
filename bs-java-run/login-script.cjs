@@ -137,17 +137,26 @@ function resolveAccount(config, accountName) {
   };
 }
 
-function extractLoginToken(response) {
-  if (!response || typeof response !== 'object') return null;
-  return response.authorization
-    || response.response?.authorization
-    || response.data?.authorization
-    || response.result?.authorization
-    || response.token
-    || response.response?.token
-    || response.data?.token
-    || response.result?.token
-    || null;
+function extractLoginToken(response, headers = {}) {
+  const headerToken = Object.entries(headers)
+    .find(([name]) => /^(authorization|x-authorization|token|x-token)$/i.test(name))?.[1] || null;
+  if (!response || typeof response !== 'object') return headerToken;
+
+  const tokenKeys = new Set(['authorization', 'token', 'access_token', 'accesstoken']);
+  const pending = [{ value: response, depth: 0 }];
+  while (pending.length > 0) {
+    const { value, depth } = pending.shift();
+    if (!value || typeof value !== 'object' || depth > 4) continue;
+    for (const [key, child] of Object.entries(value)) {
+      if (tokenKeys.has(key.toLowerCase()) && typeof child === 'string' && child.trim()) {
+        return child.trim();
+      }
+      if (child && typeof child === 'object') {
+        pending.push({ value: child, depth: depth + 1 });
+      }
+    }
+  }
+  return headerToken;
 }
 
 // ============ 登录函数 ============
@@ -170,17 +179,33 @@ async function login(options = {}) {
 
   // 用于捕获登录接口的响应
   let loginResponse = null;
+  let loginToken = null;
+
+  // Some portals store no token in the login response and send it directly in
+  // subsequent authorized requests. Capture that standard Authorization header.
+  page.on('request', (request) => {
+    loginToken = extractLoginToken(null, request.headers()) || loginToken;
+  });
 
   // 监听登录接口响应
   page.on('response', async (response) => {
     const url = response.url();
-    if (url.includes(resolved.loginApiPath)) {
-      try {
-        loginResponse = await response.json();
-      } catch (e) {
-        // ignore
-      }
+    const isConfiguredLoginResponse = url.includes(resolved.loginApiPath);
+    const isCompatibleLoginResponse = /\/(?:userLogin|privatizationLogin)(?:[/?#]|$)/i.test(url);
+    const headers = response.headers();
+    const isJsonResponse = (headers['content-type'] || '').toLowerCase().includes('application/json');
+    if (!isConfiguredLoginResponse && !isCompatibleLoginResponse && !isJsonResponse) return;
+
+    let responseBody = null;
+    try {
+      responseBody = await response.json();
+    } catch (e) {
+      // Some portals only return the Authorization value in a response header.
     }
+    const responseToken = extractLoginToken(responseBody, headers);
+    if (!responseToken) return;
+    loginResponse = responseBody;
+    loginToken = responseToken;
   });
 
   try {
@@ -213,7 +238,7 @@ async function login(options = {}) {
     await page.waitForTimeout(1000);
 
     // 从监听到的登录响应中获取 token
-    const token = extractLoginToken(loginResponse);
+    const token = loginToken || extractLoginToken(loginResponse);
     if (token) {
       const result = {
         success: true,
@@ -221,7 +246,7 @@ async function login(options = {}) {
         env: resolved.envName,
         token,
         authorization: token,
-        lastLoginTime: loginResponse.lastLoginTime || loginResponse.response?.lastLoginTime || loginResponse.data?.lastLoginTime || loginResponse.result?.lastLoginTime,
+        lastLoginTime: loginResponse?.lastLoginTime || loginResponse?.response?.lastLoginTime || loginResponse?.data?.lastLoginTime || loginResponse?.result?.lastLoginTime,
         pageUrl: page.url(),
         timestamp: new Date().toISOString(),
       };

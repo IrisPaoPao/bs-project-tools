@@ -11,16 +11,16 @@ NACOS_NAMESPACE=saas-industry-dev
 
 ## JVM 参数
 
-每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。`JAVARUN.local.md` 可配置多个“运行环境”；使用 `--profile <别名>` 时，仅覆盖该环境的 Nacos、Feign 上下文和服务端上下文，默认环境不受影响。
+每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。`JAVARUN.local.md` 可配置多个“运行环境”；使用 `--profile <别名>` 时，仅覆盖该环境的 Nacos、Feign 上下文、服务端上下文和远程行业网关，默认环境不受影响。
 
 运行环境配置写在 `JAVARUN.local.md`，格式如下：
 
 ```markdown
 ## 运行环境
 
-| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 |
-|----------|------------|----------------|--------------|--------------|
-| zhsf-test-industry-02 | 172.18.166.122:30050 | test-industry-02-zhsf-wzd | test-industry-02 | /test-industry-02 |
+| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 | 行业网关 |
+|----------|------------|----------------|--------------|--------------|----------|
+| zhsf-test-industry-02 | 172.18.166.122:30050 | test-industry-02-zhsf-wzd | test-industry-02 | /test-industry-02 | http://172.18.166.122:30000 |
 ```
 
 使用示例：`bs-java-run --profile zhsf-test-industry-02 restart saas-zhsf-business --yes`。也可设置 `BS_JAVARUN_PROFILE=zhsf-test-industry-02`；`NACOS_HOST`、`NACOS_NAMESPACE`、`JAVA_OPTS` 仍具有更高优先级。
@@ -32,6 +32,7 @@ NACOS_NAMESPACE=saas-industry-dev
 
 本地综合收费调用链路：
 - `saas-zhsf-voucher-adapter-server` 路由到本地 `saas-zhsf-base-server`：`http://127.0.0.1:18080/saas-industry`。
+- `saas-zhsf-business-server` 通过 Ribbon 和 config-base 路由到本地 `saas-zhsf-base-server`：`http://127.0.0.1:18080`；业务 Feign 上下文由运行环境配置决定。
 - `saas-zhsf-business-server` 路由到本地 `saas-zhsf-voucher-adapter-server`：`http://127.0.0.1:18081/saas-industry`。
 
 ```jvm-opts

@@ -127,14 +127,16 @@ test('loadConfig applies a named runtime profile without changing the default en
   const baseFile = writeMarkdown(dir, 'JAVARUN.md', loginRows, [
     '-Dsaas.feign.context-path=/saas-industry',
     '-Dserver.servlet.context-path=/saas-industry',
+    '-Dsaas-industry-basic-server.ribbon.listOfServers=http://old-gateway:30000',
+    '-Dsaas-zhsf-base-server.config-base.listOfServers=http://127.0.0.1:8020',
   ]);
   const localFile = writeMarkdown(dir, 'JAVARUN.local.md', loginRows);
   writeFileSync(localFile, `${readFileSync(localFile, 'utf8')}
 ## 运行环境
 
-| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 |
-|----------|------------|----------------|--------------|--------------|
-| zhsf-test | test-host:30050 | test-ns | test-industry-02 | /test-industry-02 |
+| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 | 行业网关 |
+|----------|------------|----------------|--------------|--------------|----------|
+| zhsf-test | test-host:30050 | test-ns | test-industry-02 | /test-industry-02 | http://test-gateway:30000 |
 `);
 
   const defaultConfig = loadConfig({}, { configFile: baseFile, localConfigFile: localFile });
@@ -149,4 +151,6 @@ test('loadConfig applies a named runtime profile without changing the default en
   assert.equal(profileConfig.nacosNamespace, 'test-ns');
   assert.ok(profileConfig.javaOpts.includes('-Dsaas.feign.context-path=test-industry-02'));
   assert.ok(profileConfig.javaOpts.includes('-Dserver.servlet.context-path=/test-industry-02'));
+  assert.ok(profileConfig.javaOpts.includes('-Dsaas-industry-basic-server.ribbon.listOfServers=http://test-gateway:30000'));
+  assert.ok(profileConfig.javaOpts.includes('-Dsaas-zhsf-base-server.config-base.listOfServers=http://127.0.0.1:18080'));
 });

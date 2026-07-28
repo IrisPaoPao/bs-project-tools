@@ -163,6 +163,7 @@ function parseRuntimeProfiles(content) {
       nacosNamespace: cells[2] || '',
       feignContextPath: cells[3] || '',
       serverContextPath: cells[4] || '',
+      industryGateway: cells[5] || '',
     }))
     .filter(profile => profile.name);
 }
@@ -254,6 +255,19 @@ export function loadConfig(env = process.env, options = {}) {
   if (!env.JAVA_OPTS && runtimeProfile) {
     javaOpts = overrideJvmOption(javaOpts, 'saas.feign.context-path', runtimeProfile.feignContextPath);
     javaOpts = overrideJvmOption(javaOpts, 'server.servlet.context-path', runtimeProfile.serverContextPath);
+    for (const service of [
+      'saas-industry-assembly-server',
+      'saas-industry-basic-server',
+      'saas-basic-server',
+      'saas-user-center-server',
+    ]) {
+      javaOpts = overrideJvmOption(javaOpts, `${service}.ribbon.listOfServers`, runtimeProfile.industryGateway);
+    }
+    javaOpts = overrideJvmOption(
+      javaOpts,
+      'saas-zhsf-base-server.config-base.listOfServers',
+      'http://127.0.0.1:18080',
+    );
   }
 
   return {
