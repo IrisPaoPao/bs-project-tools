@@ -1,0 +1,39 @@
+# JAVARUN.local.md.example
+
+> 本机私有配置模板（复制本文件为 `JAVARUN.local.md` 并根据个人开发环境修改即可）。
+> `JAVARUN.local.md` 已被 `.gitignore` 保护，绝不会被提交到 Git 仓库。
+
+## java 环境地址
+
+<java-home-path>
+
+## 运行环境
+
+| 环境别名 | Nacos 主机 | Nacos 命名空间 | 登录地址 | 登录接口 | 行业网关 | Feign 上下文 | 服务端上下文 | 环境 JVM 参数 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| <env-name> | <nacos-host> | <nacos-namespace> | <login-url> | <login-api> | <gateway-url> | <feign-path> | <server-path> | <env-jvm-opts> |
+
+## 账户定义
+
+| 账户别名 | 环境 | 主账号 | 用户名 | 密码 |
+| --- | --- | --- | --- | --- |
+| <account-name> | <env-name> | <tenant-id> | <username> | <password> |
+
+## 服务定义
+
+| 服务名 | 路径 | 端口 | 依赖服务 | 专属 Nacos | 专属 Nacos 命名空间 | 专属 JVM 参数 |
+| --- | --- | --- | --- | --- | --- | --- |
+| <service-name> | <service-path> | <port> | <depends-on> | <nacos-host> | <nacos-namespace> | <service-jvm-opts> |
+
+## 环境 x 服务 专属覆盖
+
+| 环境别名 | 服务名 | 专属 Nacos | 专属 Nacos 命名空间 | 专属 JVM 参数 |
+| --- | --- | --- | --- | --- |
+| <env-name> | <service-name> | <nacos-host> | <nacos-namespace> | <override-jvm-opts> |
+
+## JVM 参数
+
+```jvm-opts
+-Dsaas.feign.context-path=/saas-industry
+-Dserver.servlet.context-path=/saas-industry
+```

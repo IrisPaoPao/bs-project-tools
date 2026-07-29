@@ -1,8 +1,11 @@
 import { execSync, spawn, spawnSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { getConfig } from './config.js';
+import { getConfig, resolveServiceRuntimeConfig } from './config.js';
 import { info, success, error } from './logger.js';
+
+const MAX_INCREMENTAL_LOG_BYTES = 1024 * 1024;
 
 export function getLogDir() {
   return getConfig().logDir;
@@ -24,16 +27,30 @@ export function getLogFile(name) {
   return path.join(getLogDir(), `${name}.log`);
 }
 
-export function writePidFile(name, pid) {
+export function writePidInfo(name, infoObj) {
   const pidFile = getPidFile(name);
-  fs.writeFileSync(pidFile, String(pid));
+  fs.writeFileSync(pidFile, JSON.stringify(infoObj, null, 2), 'utf8');
+}
+
+export function readPidInfo(name) {
+  const pidFile = getPidFile(name);
+  if (!fs.existsSync(pidFile)) return null;
+  try {
+    const content = fs.readFileSync(pidFile, 'utf8').trim();
+    if (!content) return null;
+    if (content.startsWith('{')) {
+      return JSON.parse(content);
+    }
+    const pid = parseInt(content, 10);
+    return pid ? { pid, serviceName: name } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function readPidFile(name) {
-  const pidFile = getPidFile(name);
-  if (!fs.existsSync(pidFile)) return null;
-  const pid = fs.readFileSync(pidFile, 'utf8').trim();
-  return pid ? parseInt(pid, 10) : null;
+  const infoObj = readPidInfo(name);
+  return infoObj ? infoObj.pid : null;
 }
 
 export function removePidFile(name) {
@@ -41,47 +58,6 @@ export function removePidFile(name) {
   if (fs.existsSync(pidFile)) {
     fs.unlinkSync(pidFile);
   }
-}
-
-/**
- * 删除指定服务的当前日志文件 <name>.log。
- * 返回是否真的删除了文件。
- */
-export function removeServiceLog(name) {
-  const logFile = getLogFile(name);
-  if (fs.existsSync(logFile)) {
-    fs.unlinkSync(logFile);
-    return true;
-  }
-  return false;
-}
-
-/**
- * 清理历史日志：归档目录 archive/、*.bak 备份、按时间戳轮转的日志文件。
- * 保留正在使用的 <name>.log 与 <name>.pid。
- * 返回被删除条目名称列表。
- */
-export function cleanHistoricalLogs() {
-  const logDir = getLogDir();
-  if (!fs.existsSync(logDir)) return [];
-
-  const removed = [];
-
-  const archiveDir = path.join(logDir, 'archive');
-  if (fs.existsSync(archiveDir)) {
-    fs.rmSync(archiveDir, { recursive: true, force: true });
-    removed.push('archive/');
-  }
-
-  for (const entry of fs.readdirSync(logDir)) {
-    // 备份文件（xxx.log.bak.2026...）或按时间戳轮转的日志（xxx.20260703104018.log）
-    if (/\.bak(\.|$)/.test(entry) || /\.\d{8,}\.log$/.test(entry)) {
-      fs.rmSync(path.join(logDir, entry), { force: true });
-      removed.push(entry);
-    }
-  }
-
-  return removed;
 }
 
 export function checkPort(port) {
@@ -102,6 +78,15 @@ export function findPidsByPort(port) {
   }
 }
 
+export function getProcessCommand(pid) {
+  try {
+    const output = execSync(`ps -ww -p ${pid} -o command=`, { encoding: 'utf8' });
+    return output.trim();
+  } catch {
+    return '';
+  }
+}
+
 export function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -111,10 +96,27 @@ export function isProcessAlive(pid) {
   }
 }
 
+export function verifyProcessBelongsToService(pid, pidInfo) {
+  if (!pid || !isProcessAlive(pid)) return false;
+  const cmd = getProcessCommand(pid);
+  if (!cmd) return false;
+
+  if (pidInfo && pidInfo.uuid) {
+    const hasUuid = cmd.includes(`-Dbs.javarun.instance=${pidInfo.uuid}`);
+    const hasModuleOrWar = (pidInfo.warName && cmd.includes(pidInfo.warName))
+      || (pidInfo.serverModule && cmd.includes(pidInfo.serverModule))
+      || (pidInfo.serviceName && cmd.includes(pidInfo.serviceName));
+
+    return hasUuid && Boolean(hasModuleOrWar);
+  }
+
+  return false;
+}
+
 export async function killProcess(pid, signal = 'SIGTERM') {
   try {
     process.kill(pid, signal);
-  } catch (e) {
+  } catch {
     // ignore
   }
 }
@@ -155,7 +157,6 @@ export function findServerModule(root, name) {
   if (fs.existsSync(defaultModule)) {
     return path.basename(defaultModule);
   }
-  // 兜底：找第一个 *-server 目录
   const entries = fs.readdirSync(root);
   const serverModule = entries.find(e => e.endsWith('-server') && fs.statSync(path.join(root, e)).isDirectory());
   return serverModule || null;
@@ -319,8 +320,8 @@ function formatDependencyResolutionMessage({ command, root, status, failure }) {
 }
 
 export function startJavaService(name, port, root, options = {}) {
-  const { nacosHost, nacosNamespace, javaHome } = options;
   const config = getConfig();
+  const serviceRuntimeConfig = options.runtimeConfig || resolveServiceRuntimeConfig(config, name, options);
 
   const serverModule = findServerModule(root, name);
   if (!serverModule) {
@@ -334,18 +335,30 @@ export function startJavaService(name, port, root, options = {}) {
   }
 
   let javaBin = 'java';
-  if (javaHome || config.javaHome) {
-    const javaPath = path.join(javaHome || config.javaHome, 'bin', 'java');
+  if (options.javaHome || config.javaHome) {
+    const javaPath = path.join(options.javaHome || config.javaHome, 'bin', 'java');
     if (fs.existsSync(javaPath)) {
       javaBin = javaPath;
     }
   }
 
+  ensureLogDir();
   const logFile = getLogFile(name);
-  const pidFile = getPidFile(name);
 
-  const nacosHostArg = nacosHost || config.nacosHost ? `-DNACOS_HOST=${nacosHost || config.nacosHost}` : '';
-  const nacosNsArg = nacosNamespace || config.nacosNamespace ? `-DNACOS_NAMESPACE=${nacosNamespace || config.nacosNamespace}` : '';
+  const outFd = fs.openSync(logFile, 'a+');
+  const statBefore = fs.fstatSync(outFd);
+  const logCursor = {
+    inode: statBefore.ino,
+    offset: statBefore.size,
+  };
+
+  const instanceUuid = crypto.randomUUID();
+
+  const nacosHost = serviceRuntimeConfig.nacosHost;
+  const nacosNamespace = serviceRuntimeConfig.nacosNamespace;
+
+  const nacosHostArg = nacosHost ? `-DNACOS_HOST=${nacosHost}` : '';
+  const nacosNsArg = nacosNamespace ? `-DNACOS_NAMESPACE=${nacosNamespace}` : '';
 
   const loaderPath = `${path.basename(explodedDir)}/WEB-INF/classes/,${path.basename(explodedDir)}/WEB-INF/lib/`;
   const args = [
@@ -353,48 +366,95 @@ export function startJavaService(name, port, root, options = {}) {
     `-Dloader.path=${loaderPath}`,
     `-Dserver.port=${port}`,
     '-Dfile.encoding=UTF-8',
+    `-Dbs.javarun.instance=${instanceUuid}`,
   ];
   if (nacosHostArg) args.push(nacosHostArg);
   if (nacosNsArg) args.push(nacosNsArg);
-  args.push(...(config.javaOpts || []));
+
+  args.push(...(serviceRuntimeConfig.javaOpts || []));
   args.push('org.springframework.boot.loader.PropertiesLauncher');
 
   info(`启动 ${name} (端口 ${port}, Java: ${javaBin}) ...`);
 
-  const out = fs.openSync(logFile, 'a');
-  const err = fs.openSync(logFile, 'a');
-
   const child = spawn(javaBin, args, {
     cwd: targetDir,
     detached: true,
-    stdio: ['ignore', out, err],
+    stdio: ['ignore', outFd, outFd],
   });
 
   child.unref();
-  fs.closeSync(out);
-  fs.closeSync(err);
+  fs.closeSync(outFd);
 
-  writePidFile(name, child.pid);
-  info(`  PID: ${child.pid}, 日志: ${logFile}`);
+  const pidInfo = {
+    pid: child.pid,
+    uuid: instanceUuid,
+    serviceName: name,
+    serverModule,
+    warName,
+    startTime: new Date().toISOString(),
+  };
 
-  return child.pid;
+  writePidInfo(name, pidInfo);
+  info(`  PID: ${child.pid}, UUID: ${instanceUuid}, 日志: ${logFile}`);
+
+  return { pid: child.pid, uuid: instanceUuid, logCursor };
 }
 
-export async function waitServiceReady(name, port, maxWait = 180) {
+export function readIncrementalLog(logFile, cursor) {
+  if (!fs.existsSync(logFile)) {
+    return { incrementalText: '', cursor };
+  }
+
+  const stat = fs.statSync(logFile);
+  let currentOffset = cursor.offset;
+  let currentInode = cursor.inode;
+
+  if (stat.ino !== currentInode || stat.size < currentOffset) {
+    currentOffset = 0;
+    currentInode = stat.ino;
+  }
+
+  if (stat.size <= currentOffset) {
+    return { incrementalText: '', cursor: { inode: currentInode, offset: currentOffset } };
+  }
+
+  // 单次最多读取 1 MiB，避免高频日志在一次轮询中造成大内存分配。
+  const bytesToRead = Math.min(stat.size - currentOffset, MAX_INCREMENTAL_LOG_BYTES);
+  const buffer = Buffer.alloc(bytesToRead);
+  const fd = fs.openSync(logFile, 'r');
+  try {
+    fs.readSync(fd, buffer, 0, bytesToRead, currentOffset);
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const newOffset = currentOffset + bytesToRead;
+  const incrementalText = buffer.toString('utf8');
+
+  return {
+    incrementalText,
+    cursor: { inode: currentInode, offset: newOffset },
+  };
+}
+
+export async function waitServiceReady(name, port, logCursor, maxWait = 180) {
   const logFile = getLogFile(name);
-  const pidFile = getPidFile(name);
   const stableAfterReady = 5;
   const fatalPattern = /Application run failed|APPLICATION FAILED TO START|UnsatisfiedDependencyException|Exception encountered during context initialization|BeanCreationException/;
 
   let readyAt = -1;
   let elapsed = 0;
+  let cursor = logCursor || { inode: 0, offset: 0 };
+  let pendingLine = '';
+  let startedSeen = false;
+  let fatalMatch = null;
 
   info(`等待 ${name} 就绪（端口监听 + Spring 容器就绪 + 稳定 ${stableAfterReady}s）...`);
 
   while (elapsed < maxWait) {
-    const pid = readPidFile(name);
-    if (pid && !isProcessAlive(pid)) {
-      error(`${name} 进程已退出 (PID ${pid})，最近日志:`);
+    const pidInfo = readPidInfo(name);
+    if (pidInfo && pidInfo.pid && !isProcessAlive(pidInfo.pid)) {
+      error(`${name} 进程已退出 (PID ${pidInfo.pid})，最近日志:`);
       if (fs.existsSync(logFile)) {
         const lines = fs.readFileSync(logFile, 'utf8').split('\n');
         const recent = lines.slice(-30).join('\n');
@@ -403,25 +463,25 @@ export async function waitServiceReady(name, port, maxWait = 180) {
       return false;
     }
 
-    // 检查致命错误
-    if (fs.existsSync(logFile)) {
-      const recentLogs = tailLog(name, 400);
-      const lines = recentLogs.split('\n');
-      const fatal = lines.find(line => fatalPattern.test(line));
-      if (fatal) {
-        error(`${name} 启动失败（日志中检测到致命错误）:`);
-        console.log(`    ${fatal}`);
-        return false;
+    const { incrementalText, cursor: newCursor } = readIncrementalLog(logFile, cursor);
+    cursor = newCursor;
+    if (incrementalText) {
+      const lines = `${pendingLine}${incrementalText}`.split('\n');
+      pendingLine = lines.pop() || '';
+      for (const line of lines) {
+        if (fatalPattern.test(line)) fatalMatch = line;
+        if (/Started .* in [0-9.]* seconds/.test(line)) startedSeen = true;
       }
     }
 
-    const portOk = checkPort(port);
-    let startedOk = false;
-    if (fs.existsSync(logFile)) {
-      const recentLogs = tailLog(name, 400);
-      const lines = recentLogs.split('\n');
-      startedOk = lines.some(line => /Started .* in [0-9.]* seconds/.test(line));
+    if (fatalMatch) {
+      error(`${name} 启动失败（日志中检测到致命错误）:`);
+      console.log(`    ${fatalMatch}`);
+      return false;
     }
+
+    const portOk = checkPort(port);
+    const startedOk = startedSeen;
 
     if (portOk && startedOk) {
       if (readyAt < 0) {
@@ -448,24 +508,4 @@ export async function waitServiceReady(name, port, maxWait = 180) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-export function tailLog(name, lines = 20) {
-  const logFile = getLogFile(name);
-  if (!fs.existsSync(logFile)) return '';
-  const stat = fs.statSync(logFile);
-  const bytesToRead = Math.min(stat.size, 1024 * 1024);
-  const fd = fs.openSync(logFile, 'r');
-  let content;
-
-  try {
-    const buffer = Buffer.alloc(bytesToRead);
-    fs.readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
-    content = buffer.toString('utf8');
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  const allLines = content.split('\n');
-  return allLines.slice(-lines).join('\n');
 }

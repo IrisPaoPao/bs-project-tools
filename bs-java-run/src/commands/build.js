@@ -10,7 +10,7 @@ import {
 } from '../lib/logger.js';
 
 export async function build(serviceArg, options) {
-  const selection = await selectServices(serviceArg, options, '构建服务');
+  const selection = await selectServices(serviceArg, options, '构建服务', { includeDependencies: false });
   if (selection.cancelled) return 0;
   if (selection.empty) return 1;
 

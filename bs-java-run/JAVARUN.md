@@ -1,129 +1,79 @@
 # JAVARUN.md
 
-## java 环境地址
+> `JAVARUN.md` 为团队共享的规则与使用说明文档（提交 Git 仓库）。
+> 本机所有的实际运行配置（服务路径、运行环境、测试账号与密码）请配置在 `JAVARUN.local.md` 中（已被 `.gitignore` 保护）。
+> 新成员可复制 `JAVARUN.local.md.example` 生成自己的 `JAVARUN.local.md`。
+> 旧版 `运行环境` / `登录环境` / `登录账户` 表和三列表服务定义仍可读取；建议后续迁移到下述新表结构。
 
-/Users/zhangzhengqing/Library/Java/JavaVirtualMachines/corretto-1.8.0_492/Contents/Home
+---
 
-## nacos 配置参数
+## 🛠️ CLI 常用命令
 
-NACOS_HOST=172.18.163.52:30003
-NACOS_NAMESPACE=saas-industry-dev
+```bash
+# 查看服务运行状态
+bs-java-run status
 
-## JVM 参数
+# 指定环境启动服务（支持主命令前置或后置）
+bs-java-run --env zhsf-test-industry-02 start saas-zhsf-business
+bs-java-run start saas-zhsf-business --env zhsf-test-industry-02
 
-每行一个 JVM 参数，启动时自动拼接（`-D` / `-XX` / `-X` 均可，`JAVARUN.local.md` 里同名块会覆盖此处）。`JAVARUN.local.md` 可配置多个“运行环境”；使用 `--profile <别名>` 时，仅覆盖该环境的 Nacos、Feign 上下文、服务端上下文和远程行业网关，默认环境不受影响。
+# 启动服务并打包
+bs-java-run start saas-zhsf-business --build
 
-运行环境配置写在 `JAVARUN.local.md`，格式如下：
+# 重启服务（全逆序停止 -> 全正序启动）
+bs-java-run restart saas-zhsf-business
 
-```markdown
-## 运行环境
+# 停止服务（若有运行中的反向依赖服务，默认安全阻断）
+bs-java-run stop saas-zhsf-base
 
-| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 | 行业网关 |
-|----------|------------|----------------|--------------|--------------|----------|
-| zhsf-test-industry-02 | 172.18.166.122:30050 | test-industry-02-zhsf-wzd | test-industry-02 | /test-industry-02 | http://172.18.166.122:30000 |
+# 级联停止依赖该服务的所有上游服务
+bs-java-run stop saas-zhsf-base --cascade
+
+# 强杀非本工具 PID / 端口残留进程
+bs-java-run stop saas-zhsf-base --force
+
+# 指定环境与账号获取 Token（quiet 模式 stdout 只输出纯净 token 字符串）
+bs-java-run token --env zhsf-test-industry-02 --account test-zhsf-001 --quiet
 ```
 
-使用示例：`bs-java-run --profile zhsf-test-industry-02 restart saas-zhsf-business --yes`。也可设置 `BS_JAVARUN_PROFILE=zhsf-test-industry-02`；`NACOS_HOST`、`NACOS_NAMESPACE`、`JAVA_OPTS` 仍具有更高优先级。
+---
 
-本地对账调用链路：
-- 所有本地服务统一使用 `/saas-industry` 作为服务端上下文路径和 Feign 调用前缀。
-- `saas-reconciliation-assembly-server` 路由到本地 `saas-data-gateway`：`http://127.0.0.1:81/saas-industry`
-- `saas-industry-assembly-server` 直接路由到远端行业网关：`http://172.18.163.52:30000/saas-industry`
+## 📋 配置表语法规范 (于 JAVARUN.local.md 中配置)
 
-本地综合收费调用链路：
-- `saas-zhsf-voucher-adapter-server` 路由到本地 `saas-zhsf-base-server`：`http://127.0.0.1:18080/saas-industry`。
-- `saas-zhsf-business-server` 通过 Ribbon 和 config-base 路由到本地 `saas-zhsf-base-server`：`http://127.0.0.1:18080`；业务 Feign 上下文由运行环境配置决定。
-- `saas-zhsf-business-server` 路由到本地 `saas-zhsf-voucher-adapter-server`：`http://127.0.0.1:18081/saas-industry`。
+### 1. java 环境地址
+```markdown
+## java 环境地址
+
+/Library/Java/JavaVirtualMachines/corretto-1.8.0_492/Contents/Home
+```
+
+### 2. 运行环境
+> 格式：`| 环境别名 | Nacos 主机 | Nacos 命名空间 | 登录地址 | 登录接口 | 行业网关 | Feign 上下文 | 服务端上下文 | 环境 JVM 参数 |`
+
+### 3. 账户定义
+> 格式：`| 账户别名 | 环境 | 主账号 | 用户名 | 密码 |`
+
+### 4. 服务定义
+> 格式：`| 服务名 | 路径 | 端口 | 依赖服务 | 专属 Nacos | 专属 Nacos 命名空间 | 专属 JVM 参数 |`
+
+### 5. 环境 x 服务 专属覆盖
+> 格式：`| 环境别名 | 服务名 | 专属 Nacos | 专属 Nacos 命名空间 | 专属 JVM 参数 |`
+
+### 6. JVM 参数
+> 直接在底部书写 ````jvm-opts` 代码块，便于直接粘贴多行全局默认参数：
 
 ```jvm-opts
 -Dsaas.feign.context-path=/saas-industry
 -Dserver.servlet.context-path=/saas-industry
--Dsaas-reconciliation-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-reconciliation-assembly-server.ribbon.listOfServers=http://127.0.0.1:81
--Dsaas-industry-assembly-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-industry-assembly-server.ribbon.listOfServers=http://172.18.163.52:30000
--Dsaas-industry-basic-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-industry-basic-server.ribbon.listOfServers=http://172.18.163.52:30000
--Dsaas-basic-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-basic-server.ribbon.listOfServers=http://172.18.163.52:30000
--Dsaas-user-center-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-user-center-server.ribbon.listOfServers=http://172.18.163.52:30000
--Dsaas-zhsf-base-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-zhsf-base-server.ribbon.listOfServers=http://127.0.0.1:18080
--Dsaas-zhsf-voucher-adapter-server.ribbon.NIWSServerListClassName=com.netflix.loadbalancer.ConfigurationBasedServerList
--Dsaas-zhsf-voucher-adapter-server.ribbon.listOfServers=http://127.0.0.1:18081
 ```
 
-## 服务定义
+---
 
-> 格式：`| 服务名 | 路径 | 端口 |`，端口为空的是基础组件，不参与本地启动。
+## ⚙️ 优先级与求解规则
 
-| 服务名                           | 路径                                                                            | 端口 |
-| -------------------------------- | ------------------------------------------------------------------------------- |----|
-| `saas-reconciliation-business` | `/Users/zhangzhengqing/work/project/vasService/saas-reconciliation-business/` | 82 |
-| `saas-data-gateway` | `/Users/zhangzhengqing/work/project/vasService/saas-data-gateway/` | 81 |
-| `saas-ybld-rpa` | `/Users/zhangzhengqing/work/project/vasService/saas-ybld-rpa/` | 83 |
-| `saas-zhsf-base` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-base/` | 18080 |
-| `saas-zhsf-voucher-adapter` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-voucher-adapter/` | 18081 |
-| `saas-zhsf-business` | `/Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-business/` | 18082 |
-
-
-## 登录配置
-
-支持多环境、多账户。在 `JAVARUN.md`（共享模板）或 `JAVARUN.local.md`（本机私有，不提交仓库）中配置：
-
-### 登录环境
-
-> 格式：`| 别名 | 登录地址 | 登录接口 |`，账户通过「环境」列引用别名。
-
-| 别名 | 登录地址 | 登录接口 |
-|------|---------|---------|
-|  |  | POST /saas-industry/saas/identity/industry/privatizationLogin |
-
-### 登录账户
-
-> 格式：`| 账户名 | 环境 | 主账号 | 用户名 | 密码 |`，「环境」列填写上面定义的别名。
-
-| 账户名 | 环境 | 主账号 | 用户名 | 密码 |
-|--------|------|--------|--------|------|
-|  |  |  |  |  |
-
-### 固定行为
-
-| 配置项 | 值 |
-|--------|---|
-| Authorization 格式 | 直接使用 JWT Token，无 Bearer 前缀 |
-| Authorization 请求头 | `authorization: <token>` |
-| Token 来源 | 登录接口响应体 `authorization` 字段（兼容历史 `token` 字段） |
-
-> ⚠️ **重要**：登录接口的请求参数（用户名、主账号、密码）经过前端加密传输，无法直接用 curl 明文调用。必须通过 Playwright 脚本模拟浏览器操作来完成登录。
-
-## 登录脚本
-
-| 脚本 | 说明 |
-|------|------|
-| `login-script.cjs` | Playwright 版，推荐使用，可模拟完整浏览器登录流程 |
-| `login.sh` | Shell 包装脚本，调用 login-script.cjs |
-| `login-curl.sh` | curl 版（不可用，因接口参数加密） |
-
-### 使用方式
-
-```bash
-# 交互选择账户，有头模式（可看到浏览器）
-./login.sh
-# 或：node bin/bs-java-run.js login
-
-# 指定账户 + 无头模式
-node bin/bs-java-run.js login --account dev-001 --headless
-
-# 获取 token（无缓存，每次重新 headless 登录，自动复制到剪贴板）
-node bin/bs-java-run.js token
-node bin/bs-java-run.js token --account dev-001 --quiet
-node bin/bs-java-run.js token --env 52test --account dev-001 --quiet
-node bin/bs-java-run.js token --env test-industry-02 --account test-zhsf-001 --quiet
-```
-
-> 💡 `login` 和 `token` 命令默认会把获取到的 Token **自动复制到剪贴板**，直接粘贴即可使用。
-> 如需关闭，加 `--no-clipboard`。`--quiet` 模式仍会复制，但不打印提示（方便管道使用）。
-> `login` 默认有头模式；`token` 默认无头模式且不缓存，每次执行都重新登录。
-> `--env` 选择“登录环境”表中的地址和账户范围；`--profile` 选择本地 Java 服务的 Nacos/JVM 运行环境，二者可组合使用。
+1. **六层 JVM 参数优先级链**：
+   `CLI (--java-opt)` → `OS ENV (JAVA_OPTS)` → `环境×服务覆盖` → `服务专属` → `环境通用` → `全局默认`
+2. **PID 安全归属校验**：
+   启动时自动生成 `-Dbs.javarun.instance=<UUID>`，停止前使用 `ps -ww -p` 长命令强校验 UUID 与模块名，拒绝误杀宿主其它进程。
+3. **日志游标与截断复位**：
+   基于增量日志游标 `{inode, byteOffset}` 消费日志，消除历史日志引发的提前解锁误判，保持错误排查现场。

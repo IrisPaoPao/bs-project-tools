@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { extractLoginToken } = require('../../login-script.cjs');
+const { extractLoginToken, isLoginEndpoint } = require('../../login-script.cjs');
 
 test('extractLoginToken supports authorization and legacy token response wrappers', () => {
   assert.equal(extractLoginToken({ authorization: 'root-authorization' }), 'root-authorization');
@@ -14,4 +14,10 @@ test('extractLoginToken supports authorization and legacy token response wrapper
   assert.equal(extractLoginToken({ data: { token: 'data-token' } }), 'data-token');
   assert.equal(extractLoginToken({ result: { token: 'result-token' } }), 'result-token');
   assert.equal(extractLoginToken({ data: {} }), null);
+});
+
+test('isLoginEndpoint rejects unrelated business requests', () => {
+  const resolved = { loginApiPath: '/saas/login' };
+  assert.equal(isLoginEndpoint('http://example/saas/login', resolved), true);
+  assert.equal(isLoginEndpoint('http://example/other/api', resolved), false);
 });

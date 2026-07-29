@@ -16,25 +16,47 @@ import { loginCommand, tokenCommand } from '../src/commands/login.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// 读取 package.json 版本
 const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+
+function collectJavaOpt(val, memo) {
+  memo.push(val);
+  return memo;
+}
 
 program
   .name('bs-java-run')
   .description('BS Java 服务运行管理 CLI 工具')
   .version(packageJson.version, '-v, --version');
 
-program.option('-P, --profile <name>', '选择 JAVARUN.local.md 中的命名运行环境');
+program.option('-e, --env <name>', '选择目标运行环境别名');
+program.option('-P, --profile <name>', '兼容旧参数：选择命名运行环境（同 --env）');
 
-program.hook('preAction', command => {
-  const profile = command.optsWithGlobals().profile;
-  if (profile) process.env.BS_JAVARUN_PROFILE = profile;
+program.hook('preAction', (thisCommand, actionCommand) => {
+  const globalOpts = thisCommand.opts();
+  const actionOpts = actionCommand.opts();
+
+  const env = actionOpts.env || globalOpts.env;
+  const profile = actionOpts.profile || globalOpts.profile;
+
+  if (env && profile && env !== profile) {
+    console.error(`错误: 参数冲突 --env (${env}) 与 --profile (${profile}) 指定了不同的环境名称`);
+    process.exit(1);
+  }
+
+  const selectedEnv = env || profile;
+  if (selectedEnv) {
+    process.env.BS_ENV = selectedEnv;
+    process.env.BS_JAVARUN_PROFILE = selectedEnv;
+  }
 });
 
 // start 命令
 program
   .command('start [service]')
   .description('启动 Java 服务')
+  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
+  .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
   .option('-b, --build', '启动前先执行 mvn package', false)
   .addOption(new Option('-s, --skip-build', '兼容旧参数：start 现在默认不构建').hideHelp().default(false))
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
@@ -60,6 +82,9 @@ program
 program
   .command('up [service]')
   .description('构建并启动 Java 服务')
+  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
+  .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
   .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
@@ -73,6 +98,10 @@ program
 program
   .command('stop [service]')
   .description('停止 Java 服务')
+  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
+  .option('-c, --cascade', '级联递归停止依赖该服务的反向运行服务', false)
+  .option('-f, --force', '强杀非本工具 PID / 端口占用的残留进程', false)
   .option('-p, --skip-pid', '跳过 PID 文件，直接按端口清理', false)
   .option('-y, --yes', '非交互模式，默认停止全部', false)
   .action(async (service, options) => {
@@ -83,7 +112,12 @@ program
 // restart 命令
 program
   .command('restart [service]')
-  .description('重启 Java 服务')
+  .description('重启 Java 服务（按全逆序停止 -> 全正序启动）')
+  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
+  .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
+  .option('-c, --cascade', '级联递归重启依赖该服务的反向运行服务', false)
+  .option('-f, --force', '强杀非本工具 PID / 端口占用的残留进程（透传给停止阶段）', false)
   .option('-b, --build', '启动前先执行 mvn package', false)
   .addOption(new Option('-s, --skip-build', '兼容旧参数：restart 现在默认不构建').hideHelp().default(false))
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
@@ -109,6 +143,7 @@ program
   .command('login')
   .description('登录获取 Authorization Token（多账户）')
   .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
+  .option('-P, --profile <name>', '兼容旧参数：指定环境别名')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-l, --headless', '无头模式（后台运行）', false)
   .option('-t, --save-token <file>', '保存 token 到文件')
@@ -119,11 +154,12 @@ program
     process.exit(code);
   });
 
-// token 命令（无缓存，每次重新 headless 登录获取）
+// token 命令
 program
   .command('token')
   .description('获取 Authorization Token（每次重新登录，不缓存）')
   .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
+  .option('-P, --profile <name>', '兼容旧参数：指定环境别名')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-q, --quiet', '只输出 token 字符串', false)
   .option('--no-clipboard', '不自动复制 token 到剪贴板')
@@ -133,10 +169,8 @@ program
     process.exit(code);
   });
 
-// 解析参数
 program.parse();
 
-// 如果没有参数，显示帮助
 if (process.argv.length <= 2) {
   program.help();
 }

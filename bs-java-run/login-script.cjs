@@ -2,13 +2,6 @@
 /**
  * SAAS Industry 登录脚本
  * 供 Agent 调用，自动完成登录并返回 Authorization Token
- *
- * 使用方式:
- *   node login-script.cjs
- *   node login-script.cjs --headless  # 无头模式
- *
- * 输出:
- *   stdout 输出 JSON 格式的登录结果
  */
 
 const fs = require('fs');
@@ -20,21 +13,21 @@ const JAVARUN_MD = path.resolve(SCRIPT_DIR, 'JAVARUN.md');
 const JAVARUN_LOCAL_MD = path.resolve(SCRIPT_DIR, 'JAVARUN.local.md');
 
 function stripMarkdownValue(value) {
-  return value.trim().replace(/^`|`$/g, '');
+  return String(value || '').trim().replace(/^`|`$/g, '');
 }
 
-// 解析多列表格：按表头首列单元格定位，返回每行单元格数组
 function parseMultiColumnTable(content, headerFirstCell) {
   const rows = [];
   const lines = String(content || '').split(/\r?\n/);
   let inTable = false;
 
   for (const line of lines) {
-    if (!line.trim().startsWith('|')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
       inTable = false;
       continue;
     }
-    const cells = line.split('|').slice(1, -1).map(stripMarkdownValue);
+    const cells = trimmed.split('|').slice(1, -1).map(stripMarkdownValue);
     if (!inTable) {
       if (cells[0] === headerFirstCell) inTable = true;
       continue;
@@ -46,17 +39,17 @@ function parseMultiColumnTable(content, headerFirstCell) {
 }
 
 function parseLoginEnvironments(content) {
-  return parseMultiColumnTable(content, '别名')
+  return parseMultiColumnTable(content, '环境别名')
     .map(cells => ({
       name: cells[0],
-      loginUrl: cells[1] || '',
-      loginApi: (cells[2] || '').replace(/^[A-Z]+\s+/, ''),
+      loginUrl: cells[3] || cells[1] || '',
+      loginApi: (cells[4] || cells[2] || '').replace(/^[A-Z]+\s+/, ''),
     }))
     .filter(e => e.name);
 }
 
 function parseLoginAccounts(content) {
-  return parseMultiColumnTable(content, '账户名')
+  return parseMultiColumnTable(content, '账户别名')
     .map(cells => ({
       name: cells[0],
       env: cells[1] || '',
@@ -69,8 +62,19 @@ function parseLoginAccounts(content) {
 
 function mergeByName(globalList, localList) {
   const map = new Map();
-  for (const item of globalList) map.set(item.name, item);
-  for (const item of localList) map.set(item.name, item);
+  for (const item of globalList) if (item.name) map.set(item.name, { ...item });
+  for (const item of localList) {
+    if (!item.name) continue;
+    if (map.has(item.name)) {
+      const merged = { ...map.get(item.name) };
+      for (const [k, v] of Object.entries(item)) {
+        if (v !== '' && v !== null && v !== undefined) merged[k] = v;
+      }
+      map.set(item.name, merged);
+    } else {
+      map.set(item.name, { ...item });
+    }
+  }
   return [...map.values()];
 }
 
@@ -103,10 +107,9 @@ function loadConfig(env = process.env, options = {}) {
   };
 }
 
-// 根据账户名解析出完整登录配置；accountName 为空时用第一个账户
 function resolveAccount(config, accountName) {
   if (config.accounts.length === 0) {
-    throw new Error('JAVARUN.md / JAVARUN.local.md 未配置任何登录账户（## 登录账户 表）');
+    throw new Error('未配置任何登录账户，请在 JAVARUN.md / JAVARUN.local.md 的 ## 账户定义 表中添加');
   }
   const account = accountName
     ? config.accounts.find(a => a.name === accountName)
@@ -117,7 +120,7 @@ function resolveAccount(config, accountName) {
   }
   const env = config.environments.find(e => e.name === account.env);
   if (!env) {
-    throw new Error(`账户 "${account.name}" 引用的环境 "${account.env}" 不存在，请在 ## 登录环境 表中定义`);
+    throw new Error(`账户 "${account.name}" 引用的环境 "${account.env}" 不存在，请在 ## 运行环境 表中定义`);
   }
   if (!env.loginUrl) throw new Error(`环境 "${env.name}" 缺少登录地址`);
   if (!env.loginApi) throw new Error(`环境 "${env.name}" 缺少登录接口`);
@@ -159,10 +162,32 @@ function extractLoginToken(response, headers = {}) {
   return headerToken;
 }
 
-// ============ 登录函数 ============
+function diagnoseNetworkError(errMessage = '') {
+  const msg = String(errMessage);
+  if (msg.includes('ERR_NAME_NOT_RESOLVED')) {
+    return '域名解析失败 (ERR_NAME_NOT_RESOLVED)，请检查 DNS 配置或目标域名拼写。';
+  }
+  if (msg.includes('ERR_CONNECTION_REFUSED')) {
+    return '目标服务器拒绝连接 (ERR_CONNECTION_REFUSED)，请检查网关/服务是否在目标服务器上正常运行。';
+  }
+  if (msg.includes('Timeout') || msg.includes('timeout')) {
+    return '网络请求超时 (Timeout)，请检查公司 VPN 是否打开以及网络连通性。';
+  }
+  if (msg.includes('SSL') || msg.includes('TLS') || msg.includes('CERT')) {
+    return 'SSL/TLS 证书握手失败，请检查 https 证书或代理配置。';
+  }
+  return errMessage;
+}
+
+function isLoginEndpoint(url, resolved) {
+  return Boolean(
+    (resolved.loginApiPath && url.includes(resolved.loginApiPath))
+    || /\/(?:userLogin|privatizationLogin)(?:[/?#]|$)/i.test(url),
+  );
+}
+
 async function login(options = {}) {
   const config = loadConfig(options.env || process.env, options.configOptions || {});
-  // options.account 可为账户名字符串；不传则用第一个账户
   const resolved = resolveAccount(config, typeof options.account === 'string' ? options.account : null);
   const { headless = false, timeout = resolved.timeout, emitOutput = false } = options;
 
@@ -177,30 +202,24 @@ async function login(options = {}) {
 
   const page = await context.newPage();
 
-  // 用于捕获登录接口的响应
   let loginResponse = null;
   let loginToken = null;
 
-  // Some portals store no token in the login response and send it directly in
-  // subsequent authorized requests. Capture that standard Authorization header.
   page.on('request', (request) => {
+    if (!isLoginEndpoint(request.url(), resolved)) return;
     loginToken = extractLoginToken(null, request.headers()) || loginToken;
   });
 
-  // 监听登录接口响应
   page.on('response', async (response) => {
     const url = response.url();
-    const isConfiguredLoginResponse = url.includes(resolved.loginApiPath);
-    const isCompatibleLoginResponse = /\/(?:userLogin|privatizationLogin)(?:[/?#]|$)/i.test(url);
-    const headers = response.headers();
-    const isJsonResponse = (headers['content-type'] || '').toLowerCase().includes('application/json');
-    if (!isConfiguredLoginResponse && !isCompatibleLoginResponse && !isJsonResponse) return;
+    if (!isLoginEndpoint(url, resolved)) return;
 
+    const headers = response.headers();
     let responseBody = null;
     try {
       responseBody = await response.json();
     } catch (e) {
-      // Some portals only return the Authorization value in a response header.
+      // ignore
     }
     const responseToken = extractLoginToken(responseBody, headers);
     if (!responseToken) return;
@@ -209,35 +228,28 @@ async function login(options = {}) {
   });
 
   try {
-    // 第 1 步：打开登录页
-    await page.goto(resolved.loginUrl, { waitUntil: 'networkidle', timeout });
+    // 换用 domcontentloaded，避免 long polling / websocket 在 networkidle 阻塞
+    await page.goto(resolved.loginUrl, { waitUntil: 'domcontentloaded', timeout });
 
-    // 第 2 步：填写主账号
     const mainAccountInput = page.locator('input[placeholder="请输入您的主账号"]');
+    await mainAccountInput.waitFor({ state: 'visible', timeout });
     await mainAccountInput.click();
     await mainAccountInput.fill(resolved.mainAccount);
 
-    // 第 3 步：填写用户名
     const usernameInput = page.locator('input[placeholder="请输入您的用户名"]');
     await usernameInput.click();
     await usernameInput.fill(resolved.username);
 
-    // 第 4 步：填写密码
     const passwordInput = page.locator('input[placeholder="请输入您的密码"]');
     await passwordInput.click();
     await passwordInput.fill(resolved.password);
 
-    // 第 5 步：点击登录按钮
     const loginButton = page.locator('button.login-btn');
     await loginButton.click();
 
-    // 第 6 步：等待页面跳转到 portal
     await page.waitForURL('**/portal', { timeout });
-
-    // 等待一小段时间确保所有请求完成
     await page.waitForTimeout(1000);
 
-    // 从监听到的登录响应中获取 token
     const token = loginToken || extractLoginToken(loginResponse);
     if (token) {
       const result = {
@@ -258,14 +270,15 @@ async function login(options = {}) {
       await browser.close();
       return result;
     } else {
-      throw new Error('未能获取到登录 Token');
+      throw new Error('未能获取到有效的登录 Token');
     }
   } catch (err) {
+    const diagnosedReason = diagnoseNetworkError(err.message);
     const result = {
       success: false,
       account: resolved.accountName,
       env: resolved.envName,
-      error: err.message,
+      error: diagnosedReason,
       pageUrl: page.url(),
       timestamp: new Date().toISOString(),
     };
@@ -275,16 +288,14 @@ async function login(options = {}) {
     }
 
     await browser.close();
-    throw err;
+    throw new Error(diagnosedReason);
   }
 }
 
-// ============ 命令行入口 ============
 if (require.main === module) {
   const args = process.argv.slice(2);
   const headless = args.includes('--headless');
 
-  // 支持 --account <name>
   let account = null;
   const accountIdx = args.indexOf('--account');
   if (accountIdx !== -1 && args[accountIdx + 1]) {
@@ -296,4 +307,4 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
-module.exports = { login, loadConfig, resolveAccount, extractLoginToken, JAVARUN_MD, JAVARUN_LOCAL_MD };
+module.exports = { login, loadConfig, resolveAccount, extractLoginToken, isLoginEndpoint, JAVARUN_MD, JAVARUN_LOCAL_MD };

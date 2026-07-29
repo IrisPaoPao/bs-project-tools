@@ -71,16 +71,15 @@ bs-java-run token                       # 重新 headless 登录获取 token（�
 bs-java-run token --account prod-001    # 指定账户重新获取
 ```
 
-## 配置
+配置文件分为共享模板 `JAVARUN.md` 与本机私有配置 `JAVARUN.local.md`：
+- **`JAVARUN.md`**：提交到 Git 仓库的公共标准模板。
+- **`JAVARUN.local.md`**：已加入 `.gitignore`，存放个人本机的源码绝对路径、个人测试账号密码与私有 Nacos 覆盖。
 
-配置文件为 `JAVARUN.md`，包含：
-- Java 环境地址
-- Nacos 配置参数
-- 服务定义（服务名、路径、端口）
-- 登录环境（别名、登录地址、登录接口）
-- 登录账户（账户名、环境别名、主账号、用户名、密码）
-
-可选的本地覆盖文件为 `JAVARUN.local.md`，不会提交到仓库，适合放登录账号、密码等本机私有配置。`JAVARUN.local.md` 中同名环境/账户会覆盖 `JAVARUN.md`。
+新成员初始化配置：
+```bash
+cp JAVARUN.local.md.example JAVARUN.local.md
+# 然后根据个人环境编辑 JAVARUN.local.md 中的本地绝对路径和密码
+```
 
 ## 环境变量
 
