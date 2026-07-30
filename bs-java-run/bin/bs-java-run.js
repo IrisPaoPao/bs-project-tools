@@ -28,7 +28,7 @@ program
   .description('BS Java 服务运行管理 CLI 工具')
   .version(packageJson.version, '-v, --version');
 
-program.option('-e, --env <name>', '选择目标运行环境别名');
+program.option('-e, --env <name>', '选择目标运行环境名');
 program.option('-P, --profile <name>', '兼容旧参数：选择命名运行环境（同 --env）');
 
 program.hook('preAction', (thisCommand, actionCommand) => {
@@ -54,7 +54,7 @@ program.hook('preAction', (thisCommand, actionCommand) => {
 program
   .command('start [service]')
   .description('启动 Java 服务')
-  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-e, --env <name>', '选择目标运行环境名')
   .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
   .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
   .option('-b, --build', '启动前先执行 mvn package', false)
@@ -82,7 +82,7 @@ program
 program
   .command('up [service]')
   .description('构建并启动 Java 服务')
-  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-e, --env <name>', '选择目标运行环境名')
   .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
   .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
@@ -98,7 +98,7 @@ program
 program
   .command('stop [service]')
   .description('停止 Java 服务')
-  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-e, --env <name>', '选择目标运行环境名')
   .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
   .option('-c, --cascade', '级联递归停止依赖该服务的反向运行服务', false)
   .option('-f, --force', '强杀非本工具 PID / 端口占用的残留进程', false)
@@ -113,7 +113,7 @@ program
 program
   .command('restart [service]')
   .description('重启 Java 服务（按全逆序停止 -> 全正序启动）')
-  .option('-e, --env <name>', '选择目标运行环境别名')
+  .option('-e, --env <name>', '选择目标运行环境名')
   .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
   .option('-J, --java-opt <arg>', '追加/覆盖 JVM 参数（可指定多次）', collectJavaOpt, [])
   .option('-c, --cascade', '级联递归重启依赖该服务的反向运行服务', false)
@@ -142,8 +142,8 @@ program
 program
   .command('login')
   .description('登录获取 Authorization Token（多账户）')
-  .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
-  .option('-P, --profile <name>', '兼容旧参数：指定环境别名')
+  .option('-e, --env <name>', '指定登录环境名，筛选该环境下的账户')
+  .option('-P, --profile <name>', '兼容旧参数：指定环境名')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-l, --headless', '无头模式（后台运行）', false)
   .option('-t, --save-token <file>', '保存 token 到文件')
@@ -158,8 +158,8 @@ program
 program
   .command('token')
   .description('获取 Authorization Token（每次重新登录，不缓存）')
-  .option('-e, --env <name>', '指定登录环境别名，筛选该环境下的账户')
-  .option('-P, --profile <name>', '兼容旧参数：指定环境别名')
+  .option('-e, --env <name>', '指定登录环境名，筛选该环境下的账户')
+  .option('-P, --profile <name>', '兼容旧参数：指定环境名')
   .option('-a, --account <name>', '指定登录账户，跳过交互选择')
   .option('-q, --quiet', '只输出 token 字符串', false)
   .option('--no-clipboard', '不自动复制 token 到剪贴板')

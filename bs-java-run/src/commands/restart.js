@@ -5,7 +5,13 @@ import { selectServices } from '../lib/service-selector.js';
 
 export async function restart(serviceArg, options) {
   const serviceName = serviceArg || 'all';
-  const selection = await selectServices(serviceName, { ...options, yes: true }, '重启服务');
+  let selection;
+  try {
+    selection = await selectServices(serviceName, { ...options, yes: true }, '重启服务', { environmentScoped: true });
+  } catch (e) {
+    error(e.message);
+    return 1;
+  }
   if (selection.cancelled) return 0;
   if (selection.empty) return 1;
   const targetServiceNames = selection.services.map(service => service.name);

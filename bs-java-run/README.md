@@ -50,11 +50,11 @@ bs-java-run --version           # 查看版本
 bs-java-run build [service]     # 构建服务（交互式选择）
 bs-java-run build --yes         # 构建全部服务
 
-bs-java-run start [service]     # 启动已有 WAR（交互式选择）
-bs-java-run start --yes         # 启动全部服务，不自动构建
-bs-java-run start --yes --build # 构建后启动全部服务
-bs-java-run start --yes --startup-timeout 600
-bs-java-run up --yes            # 构建并启动全部服务
+bs-java-run start [service] --env 52test     # 启动该环境内已有 WAR
+bs-java-run start --yes --env 52test         # 启动该环境全部服务，不自动构建
+bs-java-run start --yes --env 52test --build # 构建后启动该环境全部服务
+bs-java-run start --yes --env 52test --startup-timeout 600
+bs-java-run up --yes --env 52test            # 构建并启动该环境全部服务
 
 bs-java-run stop [service]      # 停止服务
 bs-java-run stop --yes          # 停止全部服务
@@ -73,7 +73,7 @@ bs-java-run token --account prod-001    # 指定账户重新获取
 
 配置文件分为共享模板 `JAVARUN.md` 与本机私有配置 `JAVARUN.local.md`：
 - **`JAVARUN.md`**：提交到 Git 仓库的公共标准模板。
-- **`JAVARUN.local.md`**：已加入 `.gitignore`，存放个人本机的源码绝对路径、个人测试账号密码与私有 Nacos 覆盖。
+- **`JAVARUN.local.md`**：已加入 `.gitignore`，存放个人本机的源码绝对路径、个人测试账号密码与环境化运行配置。
 
 新成员初始化配置：
 ```bash

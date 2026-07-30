@@ -19,7 +19,13 @@ import {
 } from '../lib/logger.js';
 
 export async function start(serviceArg, options) {
-  const selection = await selectServices(serviceArg, options, '启动服务');
+  let selection;
+  try {
+    selection = await selectServices(serviceArg, options, '启动服务', { environmentScoped: true });
+  } catch (e) {
+    error(e.message);
+    return 1;
+  }
   if (selection.cancelled) return 0;
   if (selection.empty) return 1;
 
@@ -39,9 +45,9 @@ export async function start(serviceArg, options) {
     const runtimeConfig = resolveServiceRuntimeConfig(config, service.name, options);
     console.log(`\n  [服务明细: ${service.name}]`);
     console.log(`    端口:            ${service.port}`);
-    console.log(`    Nacos 地址:      ${runtimeConfig.nacosHost || '（继承全局/无）'}`);
-    console.log(`    Nacos 命名空间:  ${runtimeConfig.nacosNamespace || '（继承全局/无）'}`);
-    console.log(`    六层合并 JVM 参数 (${runtimeConfig.javaOpts.length} 项):`);
+    console.log(`    Nacos 地址:      ${runtimeConfig.nacosHost || '（环境未配置）'}`);
+    console.log(`    Nacos 命名空间:  ${runtimeConfig.nacosNamespace || '（环境未配置）'}`);
+    console.log(`    四层合并 JVM 参数 (${runtimeConfig.javaOpts.length} 项):`);
     for (const opt of runtimeConfig.javaOpts) {
       console.log(`      ${opt}`);
     }

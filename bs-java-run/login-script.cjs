@@ -16,13 +16,23 @@ function stripMarkdownValue(value) {
   return String(value || '').trim().replace(/^`|`$/g, '');
 }
 
-function parseMultiColumnTable(content, headerFirstCell) {
+function parseMultiColumnTable(content, sectionHeading, headerFirstCell) {
   const rows = [];
   const lines = String(content || '').split(/\r?\n/);
+  let inSection = false;
   let inTable = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
+    if (trimmed.startsWith('## ')) {
+      if (trimmed === `## ${sectionHeading}`) {
+        inSection = true;
+        inTable = false;
+        continue;
+      }
+      if (inSection) break;
+    }
+    if (!inSection) continue;
     if (!trimmed.startsWith('|')) {
       inTable = false;
       continue;
@@ -39,17 +49,17 @@ function parseMultiColumnTable(content, headerFirstCell) {
 }
 
 function parseLoginEnvironments(content) {
-  return parseMultiColumnTable(content, '环境别名')
+  return parseMultiColumnTable(content, '运行环境', '环境名')
     .map(cells => ({
       name: cells[0],
-      loginUrl: cells[3] || cells[1] || '',
-      loginApi: (cells[4] || cells[2] || '').replace(/^[A-Z]+\s+/, ''),
+      loginUrl: cells[3] || '',
+      loginApi: (cells[4] || '').replace(/^[A-Z]+\s+/, ''),
     }))
     .filter(e => e.name);
 }
 
 function parseLoginAccounts(content) {
-  return parseMultiColumnTable(content, '账户别名')
+  return parseMultiColumnTable(content, '账户定义', '账户别名')
     .map(cells => ({
       name: cells[0],
       env: cells[1] || '',

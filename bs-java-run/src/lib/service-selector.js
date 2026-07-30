@@ -1,4 +1,4 @@
-import { getConfig, requireService } from './config.js';
+import { getActiveEnvironmentServices, getConfig, requireService } from './config.js';
 import { header, error, interactiveSelect } from './logger.js';
 
 // 拓扑正序（依赖项在前，被依赖项在后，适合启动）
@@ -78,9 +78,9 @@ export function findRunningReverseDependents(targetServices, allServices, isRunn
   return reverseDependents;
 }
 
-export async function selectServices(serviceArg, options, title, { includeDependencies = true } = {}) {
+export async function selectServices(serviceArg, options, title, { includeDependencies = true, environmentScoped = false } = {}) {
   const config = getConfig();
-  const allServices = config.services;
+  const allServices = environmentScoped ? getActiveEnvironmentServices(config) : config.services;
   let serviceName = serviceArg;
 
   if (!serviceName) {
@@ -102,6 +102,9 @@ export async function selectServices(serviceArg, options, title, { includeDepend
 
   if (serviceName !== 'all') {
     requireService(serviceName);
+    if (environmentScoped && !allServices.some(service => service.name === serviceName)) {
+      throw new Error(`服务 ${serviceName} 未在环境 ${config.activeEnvName} 的服务清单中启用`);
+    }
   }
 
   const initialSelected = serviceName === 'all'
@@ -111,6 +114,17 @@ export async function selectServices(serviceArg, options, title, { includeDepend
   if (initialSelected.length === 0) {
     error(`没有要处理的服务: ${serviceName}`);
     return { config, serviceName, services: [], cancelled: false, empty: true };
+  }
+
+  if (environmentScoped) {
+    const enabledNames = new Set(allServices.map(service => service.name));
+    for (const service of initialSelected) {
+      for (const dependency of service.dependsOn || []) {
+        if (!enabledNames.has(dependency)) {
+          throw new Error(`环境 ${config.activeEnvName} 启用了 ${service.name}，但未启用其依赖服务 ${dependency}`);
+        }
+      }
+    }
   }
 
   // 启动/重启需要依赖闭包；构建保持用户明确指定的范围。

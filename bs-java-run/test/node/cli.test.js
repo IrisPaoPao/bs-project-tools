@@ -38,6 +38,16 @@ test('start builds only when explicitly requested', () => {
   assert.doesNotMatch(result.stdout, /--skip-build/);
 });
 
+test('start requires an explicit runtime environment', () => {
+  const result = spawnSync(process.execPath, ['bin/bs-java-run.js', 'start', '--yes'], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stdout, /必须通过 --env 或 BS_ENV 指定运行环境/);
+});
+
 test('restart builds only when explicitly requested', () => {
   const result = spawnSync(process.execPath, ['bin/bs-java-run.js', 'restart', '--help'], {
     cwd: PROJECT_ROOT,

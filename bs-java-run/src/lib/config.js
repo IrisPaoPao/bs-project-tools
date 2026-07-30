@@ -14,6 +14,11 @@ const RESERVED_JVM_KEYS = new Set([
   'file.encoding',
   'bs.javarun.instance',
 ]);
+const ENV_MANAGED_JVM_KEYS = new Set([
+  ...RESERVED_JVM_KEYS,
+  'saas.feign.context-path',
+  'server.servlet.context-path',
+]);
 
 function expandPath(p) {
   if (!p) return '';
@@ -92,18 +97,77 @@ function parseMultiColumnTable(content, sectionHeading, headerFirstCell) {
   return rows;
 }
 
-function parseJvmOptsBlock(content) {
-  const opts = [];
+/**
+ * 解析“JVM 参数组”中的多行参数。每个参数组都必须属于一个明确的运行环境，避免出现无归属的全局参数。
+ */
+function parseJvmOptionGroups(content) {
+  const groups = new Map();
+  let inSection = false;
+  let currentGroup = '';
   let inBlock = false;
+
   for (const line of String(content || '').split(/\r?\n/)) {
-    const t = line.trim();
-    if (/^```jvm-opts\s*$/.test(t)) { inBlock = true; continue; }
-    if (inBlock) {
-      if (/^```/.test(t)) { inBlock = false; continue; }
-      if (t) opts.push(t);
+    const trimmed = line.trim();
+    if (trimmed.startsWith('## ')) {
+      if (trimmed === '## JVM 参数组') {
+        inSection = true;
+        currentGroup = '';
+        continue;
+      }
+      if (inSection) break;
+    }
+    if (!inSection) continue;
+
+    if (trimmed.startsWith('### ')) {
+      if (inBlock) {
+        throw new Error('JVM 参数组代码块未闭合');
+      }
+      currentGroup = trimmed.substring(4).trim();
+      if (!currentGroup) {
+        throw new Error('JVM 参数组名称不能为空');
+      }
+      if (groups.has(currentGroup)) {
+        throw new Error(`JVM 参数组重复: ${currentGroup}`);
+      }
+      groups.set(currentGroup, []);
+      continue;
+    }
+
+    if (/^```jvm-env-opts\s*$/.test(trimmed)) {
+      if (!currentGroup) {
+        throw new Error('JVM 参数组代码块必须位于三级标题之后');
+      }
+      inBlock = true;
+      continue;
+    }
+    if (inBlock && /^```/.test(trimmed)) {
+      inBlock = false;
+      continue;
+    }
+    if (inBlock && trimmed) {
+      groups.get(currentGroup).push(trimmed);
     }
   }
-  return opts;
+
+  if (inBlock) {
+    throw new Error('JVM 参数组代码块未闭合');
+  }
+  return groups;
+}
+
+function assertNoLegacyConfiguration(content) {
+  for (const line of String(content || '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (/^```jvm-opts\s*$/.test(trimmed) || trimmed === '## JVM 参数') {
+      throw new Error('不再支持全局 JVM 参数，请迁移到 ## JVM 参数组');
+    }
+    if (trimmed === '## 环境 x 服务 专属覆盖') {
+      throw new Error('不再支持“环境 x 服务 专属覆盖”，请迁移到 ## 环境服务');
+    }
+    if (trimmed === '## 登录环境' || trimmed === '## 登录账户' || trimmed.startsWith('| 环境别名 |')) {
+      throw new Error('不再支持旧环境配置，请使用 ## 运行环境 中的“环境名”表');
+    }
+  }
 }
 
 export function parseJvmOptionKey(option) {
@@ -174,7 +238,7 @@ function mergeByName(globalList, localList, idKey = 'name') {
 }
 
 function parseLoginEnvironments(content) {
-  const newRows = parseMultiColumnTable(content, '运行环境', '环境别名')
+  return parseMultiColumnTable(content, '运行环境', '环境名')
     .map(cells => ({
       name: cells[0],
       nacosHost: cells[1] || '',
@@ -184,43 +248,12 @@ function parseLoginEnvironments(content) {
       industryGateway: cells[5] || '',
       feignContextPath: cells[6] || '',
       serverContextPath: cells[7] || '',
-      jvmOptsStr: cells[8] || '',
     }))
     .filter(e => e.name);
-
-  // 兼容旧版“运行环境”表：| 运行环境 | Nacos 主机 | Nacos 命名空间 | Feign 上下文 | 服务端上下文 | 行业网关 |
-  const legacyRuntimeRows = parseMultiColumnTable(content, '运行环境', '运行环境')
-    .map(cells => ({
-      name: cells[0],
-      nacosHost: cells[1] || '',
-      nacosNamespace: cells[2] || '',
-      loginUrl: '',
-      loginApi: '',
-      industryGateway: cells[5] || '',
-      feignContextPath: cells[3] || '',
-      serverContextPath: cells[4] || '',
-      jvmOptsStr: '',
-    }))
-    .filter(e => e.name);
-  const legacyLoginRows = parseMultiColumnTable(content, '登录环境', '别名')
-    .map(cells => ({
-      name: cells[0],
-      nacosHost: '',
-      nacosNamespace: '',
-      loginUrl: cells[1] || '',
-      loginApi: (cells[2] || '').replace(/^[A-Z]+\s+/, ''),
-      industryGateway: '',
-      feignContextPath: '',
-      serverContextPath: '',
-      jvmOptsStr: '',
-    }))
-    .filter(e => e.name);
-
-  return mergeByName(mergeByName(legacyRuntimeRows, legacyLoginRows), newRows);
 }
 
 function parseLoginAccounts(content) {
-  const newRows = parseMultiColumnTable(content, '账户定义', '账户别名')
+  return parseMultiColumnTable(content, '账户定义', '账户别名')
     .map(cells => ({
       name: cells[0],
       env: cells[1] || '',
@@ -229,18 +262,6 @@ function parseLoginAccounts(content) {
       password: cells[4] || '',
     }))
     .filter(a => a.name);
-
-  const legacyRows = parseMultiColumnTable(content, '登录账户', '账户名')
-    .map(cells => ({
-      name: cells[0],
-      env: cells[1] || '',
-      mainAccount: cells[2] || '',
-      username: cells[3] || '',
-      password: cells[4] || '',
-    }))
-    .filter(a => a.name);
-
-  return mergeByName(legacyRows, newRows);
 }
 
 function parseServices(content) {
@@ -250,9 +271,9 @@ function parseServices(content) {
       const rawPath = cells[1];
       const portStr = cells[2];
       const dependsOnStr = cells[3] || '';
-      const nacosHost = cells[4] || '';
-      const nacosNamespace = cells[5] || '';
-      const jvmOptsStr = cells[6] || '';
+      if (cells.length > 4) {
+        throw new Error('服务定义只支持“服务名、路径、端口、依赖服务”，请将 Nacos/JVM 参数迁移到环境配置');
+      }
 
       // undefined 表示本地表未填写，应在按名称合并时继承共享配置；[] 才表示最终没有依赖。
       const dependsOn = dependsOnStr ? dependsOnStr.split(',').map(s => s.trim()).filter(Boolean) : undefined;
@@ -264,23 +285,18 @@ function parseServices(content) {
         path: servicePath,
         port,
         dependsOn,
-        nacosHost,
-        nacosNamespace,
-        jvmOptsStr,
       };
     })
     .filter(s => s.name);
 }
 
-function parseEnvServiceOverrides(content) {
-  return parseMultiColumnTable(content, '环境 x 服务 专属覆盖', '环境别名')
-    .filter(cells => cells[1] && cells[0] !== '环境别名')
+function parseEnvironmentServices(content) {
+  return parseMultiColumnTable(content, '环境服务', '环境名')
+    .filter(cells => cells[1] && cells[0] !== '环境名')
     .map(cells => ({
       envName: cells[0],
       serviceName: cells[1],
-      nacosHost: cells[2] || '',
-      nacosNamespace: cells[3] || '',
-      jvmOptsStr: cells[4] || '',
+      jvmOptsStr: cells[2] || '',
     }));
 }
 
@@ -341,23 +357,102 @@ function validateServicesConfig(services) {
   }
 }
 
-function mergeEnvServiceOverrides(globalList, localList) {
+function mergeEnvironmentServices(globalList, localList) {
   const map = new Map();
   for (const item of globalList) {
     map.set(`${item.envName}\u0000${item.serviceName}`, { ...item });
   }
   for (const item of localList) {
     const key = `${item.envName}\u0000${item.serviceName}`;
-    const base = map.get(key) || {};
-    const merged = { ...base };
-    for (const [name, value] of Object.entries(item)) {
-      if (value !== '' && value !== null && value !== undefined) {
-        merged[name] = value;
-      }
+    const base = map.get(key) || { jvmOptsStr: '' };
+    const merged = {
+      ...base,
+      envName: item.envName,
+      serviceName: item.serviceName,
+    };
+    // 空字符串是环境服务未设置专属参数的合法状态，不能在合并时丢失该字段。
+    if (item.jvmOptsStr !== '' || !Object.hasOwn(merged, 'jvmOptsStr')) {
+      merged.jvmOptsStr = item.jvmOptsStr;
     }
     map.set(key, merged);
   }
   return [...map.values()];
+}
+
+function mergeJvmOptionGroups(globalGroups, localGroups) {
+  const groups = new Map();
+  for (const [name, options] of globalGroups) {
+    groups.set(name, [...options]);
+  }
+  for (const [name, options] of localGroups) {
+    groups.set(name, [...(groups.get(name) || []), ...options]);
+  }
+  return groups;
+}
+
+function validatePersistentJvmOptions(options, scope) {
+  const keys = new Set();
+  for (const option of options) {
+    const key = parseJvmOptionKey(option);
+    if (!key) continue;
+    if (ENV_MANAGED_JVM_KEYS.has(key)) {
+      throw new Error(`${scope} 不允许配置 ${key}，该参数由运行环境或工具统一管理`);
+    }
+    if (keys.has(key)) {
+      throw new Error(`${scope} 中存在重复 JVM 参数: ${key}`);
+    }
+    keys.add(key);
+  }
+}
+
+function validateEnvironmentConfiguration(environments, accounts, services, environmentServices, jvmOptionGroups) {
+  const environmentNames = new Set(environments.map(environment => environment.name));
+  const serviceNames = new Set(services.map(service => service.name));
+  const environmentServiceNames = new Set();
+  const enabledServicesByEnvironment = new Map();
+
+  for (const account of accounts) {
+    if (account.env && !environmentNames.has(account.env)) {
+      throw new Error(`账户 ${account.name} 引用了未配置环境: ${account.env}`);
+    }
+  }
+
+  for (const [name, options] of jvmOptionGroups) {
+    if (!environmentNames.has(name)) {
+      throw new Error(`JVM 参数组 ${name} 未对应已配置的运行环境`);
+    }
+    validatePersistentJvmOptions(options, `JVM 参数组 ${name}`);
+  }
+
+  for (const environmentService of environmentServices) {
+    const key = `${environmentService.envName}\u0000${environmentService.serviceName}`;
+    if (environmentServiceNames.has(key)) {
+      throw new Error(`环境服务配置重复: ${environmentService.envName} / ${environmentService.serviceName}`);
+    }
+    environmentServiceNames.add(key);
+    if (!environmentNames.has(environmentService.envName)) {
+      throw new Error(`环境服务引用了未配置环境: ${environmentService.envName}`);
+    }
+    if (!serviceNames.has(environmentService.serviceName)) {
+      throw new Error(`环境服务引用了未配置服务: ${environmentService.serviceName}`);
+    }
+    const enabledServices = enabledServicesByEnvironment.get(environmentService.envName) || new Set();
+    enabledServices.add(environmentService.serviceName);
+    enabledServicesByEnvironment.set(environmentService.envName, enabledServices);
+    const options = environmentService.jvmOptsStr.split(/\s+/).filter(Boolean);
+    validatePersistentJvmOptions(options, `环境服务 ${environmentService.envName} / ${environmentService.serviceName}`);
+  }
+
+  for (const [environmentName, enabledServices] of enabledServicesByEnvironment) {
+    for (const serviceName of enabledServices) {
+      const service = services.find(item => item.name === serviceName);
+      for (const dependency of service.dependsOn || []) {
+        if (!enabledServices.has(dependency)) {
+          throw new Error(`环境 ${environmentName} 启用了 ${serviceName}，但未启用其依赖服务 ${dependency}`);
+        }
+      }
+    }
+  }
 }
 
 function findJavaHome(content) {
@@ -375,6 +470,8 @@ export function loadConfig(env = process.env, options = {}) {
   const localConfigFile = options.localConfigFile || path.join(path.dirname(configFile), 'JAVARUN.local.md');
   const content = readConfigFile(configFile);
   const localContent = readConfigFile(localConfigFile, false);
+  assertNoLegacyConfiguration(content);
+  assertNoLegacyConfiguration(localContent);
 
   const globalRawServices = parseServices(content);
   const localRawServices = parseServices(localContent);
@@ -397,15 +494,15 @@ export function loadConfig(env = process.env, options = {}) {
   ).map(service => ({ ...service, dependsOn: service.dependsOn || [] }));
   validateServicesConfig(services);
 
-  const envServiceOverrides = mergeEnvServiceOverrides(
-    parseEnvServiceOverrides(content),
-    parseEnvServiceOverrides(localContent),
+  const environmentServices = mergeEnvironmentServices(
+    parseEnvironmentServices(content),
+    parseEnvironmentServices(localContent),
   );
-
-  const globalJvmOpts = [
-    ...parseJvmOptsBlock(content),
-    ...parseJvmOptsBlock(localContent),
-  ];
+  const jvmOptionGroups = mergeJvmOptionGroups(
+    parseJvmOptionGroups(content),
+    parseJvmOptionGroups(localContent),
+  );
+  validateEnvironmentConfiguration(environments, accounts, services, environmentServices, jvmOptionGroups);
 
   const envFlag = options.env || env.BS_ENV || '';
   const profileFlag = options.profile || env.BS_JAVARUN_PROFILE || '';
@@ -436,11 +533,11 @@ export function loadConfig(env = process.env, options = {}) {
     environments,
     accounts,
     services,
-    envServiceOverrides,
+    environmentServices,
     activeEnvName: selectedEnvName,
     activeEnv: activeEnvObj,
     javaHome: expandPath(javaHome),
-    globalJvmOpts,
+    jvmOptionGroups,
     osJavaOpts,
     cliJavaOpts,
     startupTimeoutSeconds: resolveStartupTimeoutSeconds(env.BS_STARTUP_TIMEOUT),
@@ -455,29 +552,28 @@ export function resolveServiceRuntimeConfig(config, serviceName, runtimeOptions 
   }
 
   const activeEnv = config.activeEnv || {};
-  const override = config.envServiceOverrides.find(
+  const environmentService = config.environmentServices.find(
     o => o.envName === config.activeEnvName && o.serviceName === serviceName
   ) || {};
 
-  const finalNacosHost = runtimeOptions.nacosHost || override.nacosHost || service.nacosHost || activeEnv.nacosHost || '';
-  const finalNacosNamespace = runtimeOptions.nacosNamespace || override.nacosNamespace || service.nacosNamespace || activeEnv.nacosNamespace || '';
+  const finalNacosHost = runtimeOptions.nacosHost || activeEnv.nacosHost || '';
+  const finalNacosNamespace = runtimeOptions.nacosNamespace || activeEnv.nacosNamespace || '';
 
-  const envJvmOpts = activeEnv.jvmOptsStr ? activeEnv.jvmOptsStr.split(/\s+/).filter(Boolean) : [];
+  const environmentJvmOpts = config.jvmOptionGroups.get(activeEnv.name) || [];
+  const contextJvmOpts = [];
   if (activeEnv.feignContextPath) {
-    envJvmOpts.push(`-Dsaas.feign.context-path=${activeEnv.feignContextPath}`);
+    contextJvmOpts.push(`-Dsaas.feign.context-path=${activeEnv.feignContextPath}`);
   }
   if (activeEnv.serverContextPath) {
-    envJvmOpts.push(`-Dserver.servlet.context-path=${activeEnv.serverContextPath}`);
+    contextJvmOpts.push(`-Dserver.servlet.context-path=${activeEnv.serverContextPath}`);
   }
 
-  const serviceJvmOpts = service.jvmOptsStr ? service.jvmOptsStr.split(/\s+/).filter(Boolean) : [];
-  const envServiceJvmOpts = override.jvmOptsStr ? override.jvmOptsStr.split(/\s+/).filter(Boolean) : [];
+  const environmentServiceJvmOpts = environmentService.jvmOptsStr ? environmentService.jvmOptsStr.split(/\s+/).filter(Boolean) : [];
 
   const finalJavaOpts = mergeJvmOptions(
-    config.globalJvmOpts,
-    envJvmOpts,
-    serviceJvmOpts,
-    envServiceJvmOpts,
+    environmentJvmOpts,
+    contextJvmOpts,
+    environmentServiceJvmOpts,
     config.osJavaOpts,
     Array.isArray(runtimeOptions.javaOpt)
       ? runtimeOptions.javaOpt
@@ -490,6 +586,18 @@ export function resolveServiceRuntimeConfig(config, serviceName, runtimeOptions 
     nacosNamespace: finalNacosNamespace,
     javaOpts: finalJavaOpts,
   };
+}
+
+export function getActiveEnvironmentServices(config) {
+  if (!config.activeEnvName || !config.activeEnv) {
+    throw new Error('启动、重启和 up 命令必须通过 --env 或 BS_ENV 指定运行环境');
+  }
+  const enabledNames = new Set(
+    config.environmentServices
+      .filter(item => item.envName === config.activeEnvName)
+      .map(item => item.serviceName),
+  );
+  return config.services.filter(service => enabledNames.has(service.name));
 }
 
 export function getConfig() {
