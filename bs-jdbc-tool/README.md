@@ -45,7 +45,7 @@
 ## 架构
 
 - **Node.js MCP Server**: 基于 Model Context Protocol SDK 实现的 MCP 服务器，提供工具注册和标准输入输出通信
-- **Java JDBC Executor**: 后端使用 Java 执行 JDBC 操作，支持 MySQL、Oracle 等数据库
+- **Java JDBC Executor**: 后端使用 Java 执行 JDBC 操作，支持 MySQL、Oracle、IRIS 等数据库
 
 ## 前置要求
 
@@ -75,6 +75,7 @@ npm install
 
 - `drivers/mysql-connector-j.jar` - MySQL Connector/J 9.7.0
 - `drivers/ojdbc.jar` - Oracle ojdbc17 23.26.2.0.0
+- `drivers/intersystems-jdbc.jar` - InterSystems IRIS JDBC 3.10.5（可从 IntelliJ/DataGrip 的 IRIS 驱动缓存或 IRIS 安装包 `dev/java/lib/JDK18/` 目录获取）
 
 > **注意**: 这些 jar 文件被 `.gitignore` 忽略，不会提交到仓库。新机器需从 DataGrip 或其他来源自行放置相同文件名。
 
@@ -86,7 +87,7 @@ npm install
 配置说明：
 - **安全提醒**: `config.local.json` 含明文密码，绝不能分享、提交、贴到公开渠道；真实密码由用户本机手动填写。
 - `config.local.json` 已被 `.gitignore` 忽略，不会提交到仓库
-- 预置数据库别名: `dev-mysql`、`dev-oracle`
+- 预置数据库别名: `dev-mysql`、`dev-oracle`（本机 `config.local.json` 中还额外配置了 `dev-iris`，未纳入示例模板）
 - **重要**: 请手动替换 `请在此处填写MySQL密码` 和 `请在此处填写Oracle密码` 占位符为真实密码
 - **环境说明**: `dev-mysql`、`dev-oracle` 的 IP、用户名是当前环境初始配置，其他环境需替换为实际值。
 
