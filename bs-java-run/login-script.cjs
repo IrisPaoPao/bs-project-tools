@@ -172,6 +172,92 @@ function extractLoginToken(response, headers = {}) {
   return headerToken;
 }
 
+function extractTokenFromCookies(cookies = []) {
+  const tokenCookie = cookies.find(cookie => /^(authorization|x-authorization|token|x-token|access_?token)$/i.test(cookie.name || ''));
+  return tokenCookie?.value || null;
+}
+
+function safeUrlPath(url) {
+  try {
+    return new URL(url, 'http://localhost').pathname || '/';
+  } catch (error) {
+    return '[invalid-url]';
+  }
+}
+
+function summarizePayload(value, depth = 0) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `[array:${value.length}]`;
+  if (typeof value !== 'object') return typeof value;
+  if (depth >= 2) return 'object';
+  return Object.fromEntries(Object.entries(value)
+    .slice(0, 12)
+    .map(([key, child]) => [key, summarizePayload(child, depth + 1)]));
+}
+
+function createLoginEvidence(resolved) {
+  return {
+    configuredPath: safeUrlPath(resolved.loginApiPath),
+    matchedRequests: [],
+    candidateRequests: [],
+    matchedResponses: [],
+  };
+}
+
+function isLikelyLoginEndpoint(url) {
+  return /(?:login|auth|token)/i.test(safeUrlPath(url));
+}
+
+function recordLoginRequest(evidence, request, matched) {
+  if (!matched && !isLikelyLoginEndpoint(request.url())) return;
+  const target = matched ? evidence.matchedRequests : evidence.candidateRequests;
+  if (target.length >= 4) return;
+  target.push({
+    method: request.method(),
+    path: safeUrlPath(request.url()),
+  });
+}
+
+function recordLoginResponse(evidence, response, body, matched) {
+  if (!matched && !isLikelyLoginEndpoint(response.url())) return;
+  const target = matched ? evidence.matchedResponses : evidence.candidateRequests;
+  if (target.length >= 4) return;
+  const entry = {
+    path: safeUrlPath(response.url()),
+    status: response.status(),
+    headers: Object.keys(response.headers()).sort(),
+    body: summarizePayload(body),
+  };
+  target.push(entry);
+}
+
+function formatLoginEvidence(evidence) {
+  const formatRequests = items => items.map((item) => {
+    const responseDetails = item.status
+      ? ` HTTP ${item.status} 字段 ${JSON.stringify(item.body)} 响应头 ${item.headers.join('|') || '无'}`
+      : '';
+    return `${item.method || 'RESPONSE'} ${item.path}${responseDetails}`;
+  }).join(', ') || '无';
+  return `配置路径 ${evidence.configuredPath}；命中请求 ${formatRequests(evidence.matchedRequests)}；命中响应 ${formatRequests(evidence.matchedResponses)}；候选请求 ${formatRequests(evidence.candidateRequests)}`;
+}
+
+function isAuthenticationFailure(response) {
+  if (!response) return false;
+  return response.status === 401 || response.status === 403;
+}
+
+function buildTokenMissingDiagnostic(evidence) {
+  if (evidence.matchedResponses.length === 0) {
+    return `登录接口未命中: ${formatLoginEvidence(evidence)}`;
+  }
+  const failedResponse = evidence.matchedResponses.find(response => response.status < 200 || response.status >= 300);
+  if (failedResponse) {
+    const category = isAuthenticationFailure(failedResponse) ? '认证失败' : '登录接口非 2xx';
+    return `${category}: HTTP ${failedResponse.status}；${formatLoginEvidence(evidence)}`;
+  }
+  return `Token 缺失: 登录接口已命中但响应、Cookie 和后续认证请求均未提供 Token；${formatLoginEvidence(evidence)}`;
+}
+
 const LOGIN_INPUTS = {
   mainAccount: {
     label: '主账号',
@@ -248,9 +334,13 @@ function diagnoseNetworkError(errMessage = '') {
 }
 
 function isLoginEndpoint(url, resolved) {
+  const requestPath = safeUrlPath(url);
+  const configuredPath = safeUrlPath(resolved.loginApiPath);
   return Boolean(
-    (resolved.loginApiPath && url.includes(resolved.loginApiPath))
-    || /\/(?:userLogin|privatizationLogin)(?:[/?#]|$)/i.test(url),
+    requestPath === configuredPath
+    || /^\/(?:userLogin|privatizationLogin)(?:\/|$)/i.test(requestPath)
+    // 辽宁环境已验证实际请求为此地址，响应根节点返回 token。
+    || requestPath === '/tax/identity/v1/login',
   );
 }
 
@@ -283,17 +373,26 @@ async function login(options = {}) {
   let loginToken = null;
   let loginRequestFailure = null;
   let loginResponseStatus = null;
+  let loginSubmitted = false;
+  const loginEvidence = createLoginEvidence(resolved);
 
   page.on('request', (request) => {
-    if (!isLoginEndpoint(request.url(), resolved)) return;
-    loginToken = extractLoginToken(null, request.headers()) || loginToken;
+    const matched = isLoginEndpoint(request.url(), resolved);
+    if (matched || loginSubmitted) {
+      recordLoginRequest(loginEvidence, request, matched);
+    }
+    if (matched) {
+      loginToken = extractLoginToken(null, request.headers()) || loginToken;
+    }
+    if (loginSubmitted) {
+      loginToken = extractLoginToken(null, request.headers()) || loginToken;
+    }
   });
 
   page.on('response', async (response) => {
     const url = response.url();
-    if (!isLoginEndpoint(url, resolved)) return;
-
-    loginResponseStatus = response.status();
+    const matched = isLoginEndpoint(url, resolved);
+    if (!matched && (!loginSubmitted || !isLikelyLoginEndpoint(url))) return;
     const headers = response.headers();
     let responseBody = null;
     try {
@@ -301,10 +400,13 @@ async function login(options = {}) {
     } catch (e) {
       // ignore
     }
+    recordLoginResponse(loginEvidence, response, responseBody, matched);
+    if (!matched) return;
+
+    loginResponseStatus = response.status();
     const responseToken = extractLoginToken(responseBody, headers);
-    if (!responseToken) return;
     loginResponse = responseBody;
-    loginToken = responseToken;
+    loginToken = responseToken || loginToken;
   });
 
   page.on('requestfailed', (request) => {
@@ -326,6 +428,7 @@ async function login(options = {}) {
     await fillLoginInput(page, 'password', resolved.password, timeout);
 
     const loginButton = page.locator('button.login-btn');
+    loginSubmitted = true;
     await loginButton.click();
 
     try {
@@ -335,12 +438,22 @@ async function login(options = {}) {
         throw new Error(`登录请求失败: ${diagnoseNetworkError(loginRequestFailure)}`);
       }
       if (loginResponseStatus && (loginResponseStatus < 200 || loginResponseStatus >= 300)) {
-        throw new Error(`登录请求失败: 登录接口返回 HTTP ${loginResponseStatus}`);
+        throw new Error(buildTokenMissingDiagnostic(loginEvidence));
+      }
+      if (loginEvidence.matchedRequests.length === 0) {
+        throw new Error(buildTokenMissingDiagnostic(loginEvidence));
       }
       const reason = isTimeoutError(error) ? '登录后跳转超时' : '登录后跳转失败';
       throw new Error(`${reason}: 未跳转至 **/portal (${error.message})`);
     }
     await page.waitForTimeout(1000);
+
+    const cookieToken = extractTokenFromCookies(await context.cookies());
+    loginToken = cookieToken || loginToken;
+
+    if (process.env.BS_LOGIN_DIAGNOSTICS === '1') {
+      console.error(`登录诊断: ${formatLoginEvidence(loginEvidence)}`);
+    }
 
     const token = loginToken || extractLoginToken(loginResponse);
     if (token) {
@@ -362,7 +475,7 @@ async function login(options = {}) {
       await browser.close();
       return result;
     } else {
-      throw new Error('未能获取到有效的登录 Token');
+      throw new Error(buildTokenMissingDiagnostic(loginEvidence));
     }
   } catch (err) {
     const diagnosedReason = err.message;
@@ -405,6 +518,8 @@ module.exports = {
   loadLoginConfig,
   resolveAccount,
   extractLoginToken,
+  extractTokenFromCookies,
+  buildTokenMissingDiagnostic,
   getLoginInputSelector,
   getLoginInputLocator,
   fillLoginInput,

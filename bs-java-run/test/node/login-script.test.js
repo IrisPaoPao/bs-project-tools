@@ -7,7 +7,9 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const {
+  buildTokenMissingDiagnostic,
   extractLoginToken,
+  extractTokenFromCookies,
   fillLoginInput,
   getLoginInputSelector,
   isLoginEndpoint,
@@ -17,6 +19,7 @@ const {
 } = require('../../login-script.cjs');
 
 test('extractLoginToken supports authorization and legacy token response wrappers', () => {
+  assert.equal(extractLoginToken(null, { authorization: 'header-token' }), 'header-token');
   assert.equal(extractLoginToken({ authorization: 'root-authorization' }), 'root-authorization');
   assert.equal(extractLoginToken({ response: { authorization: 'response-authorization' } }), 'response-authorization');
   assert.equal(extractLoginToken({ data: { authorization: 'data-authorization' } }), 'data-authorization');
@@ -27,9 +30,51 @@ test('extractLoginToken supports authorization and legacy token response wrapper
   assert.equal(extractLoginToken({ data: {} }), null);
 });
 
-test('isLoginEndpoint rejects unrelated business requests', () => {
-  const resolved = { loginApiPath: '/saas/login' };
-  assert.equal(isLoginEndpoint('http://example/saas/login', resolved), true);
+test('login script supports token cookies and reports missing tokens without secret values', () => {
+  assert.equal(extractTokenFromCookies([{ name: 'access_token', value: 'cookie-token' }]), 'cookie-token');
+  assert.equal(extractTokenFromCookies([{ name: 'JSESSIONID', value: 'session-value' }]), null);
+
+  const diagnostic = buildTokenMissingDiagnostic({
+    configuredPath: '/privatizationLogin',
+    matchedRequests: [{ method: 'POST', path: '/privatizationLogin' }],
+    matchedResponses: [{
+      path: '/privatizationLogin',
+      status: 200,
+      headers: ['content-type'],
+      body: { response: 'object' },
+    }],
+    candidateRequests: [],
+  });
+  assert.match(diagnostic, /Token 缺失/);
+  assert.match(diagnostic, /HTTP 200/);
+  assert.doesNotMatch(diagnostic, /cookie-token|session-value/);
+
+  assert.match(
+    buildTokenMissingDiagnostic({
+      configuredPath: '/privatizationLogin',
+      matchedRequests: [],
+      matchedResponses: [],
+      candidateRequests: [{ method: 'POST', path: '/tax/identity/v1/login' }],
+    }),
+    /登录接口未命中/,
+  );
+  assert.match(
+    buildTokenMissingDiagnostic({
+      configuredPath: '/privatizationLogin',
+      matchedRequests: [{ method: 'POST', path: '/privatizationLogin' }],
+      matchedResponses: [{ path: '/privatizationLogin', status: 401, headers: [], body: {} }],
+      candidateRequests: [],
+    }),
+    /认证失败/,
+  );
+});
+
+test('isLoginEndpoint supports configured, legacy and verified Liaoning login paths', () => {
+  const resolved = { loginApiPath: '/saas-industry/saas/identity/industry/privatizationLogin' };
+  assert.equal(isLoginEndpoint('http://example/saas-industry/saas/identity/industry/privatizationLogin', resolved), true);
+  assert.equal(isLoginEndpoint('http://example/tax/identity/v1/login', resolved), true);
+  assert.equal(isLoginEndpoint('http://example/userLogin', resolved), true);
+  assert.equal(isLoginEndpoint('http://example/saas/login', resolved), false);
   assert.equal(isLoginEndpoint('http://example/other/api', resolved), false);
 });
 
