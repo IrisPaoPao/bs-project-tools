@@ -12,6 +12,13 @@ import { status } from '../src/commands/status.js';
 import { build } from '../src/commands/build.js';
 import { up } from '../src/commands/up.js';
 import { loginCommand, tokenCommand } from '../src/commands/login.js';
+import {
+  doctorWorkspace,
+  initWorkspace,
+  reconfigureWorkspace,
+  smokeWorkspace,
+  updateWorkspace,
+} from '../src/commands/workspace.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,6 +37,7 @@ program
 
 program.option('-e, --env <name>', '选择目标运行环境名');
 program.option('-P, --profile <name>', '兼容旧参数：选择命名运行环境（同 --env）');
+program.option('-w, --workspace <directory>', '使用目标聚合目录下的 .bs-java-run 配置');
 
 program.hook('preAction', (thisCommand, actionCommand) => {
   const globalOpts = thisCommand.opts();
@@ -47,6 +55,12 @@ program.hook('preAction', (thisCommand, actionCommand) => {
   if (selectedEnv) {
     process.env.BS_ENV = selectedEnv;
     process.env.BS_JAVARUN_PROFILE = selectedEnv;
+  }
+
+  const workspace = actionOpts.workspace || globalOpts.workspace;
+  if (workspace) {
+    process.env.BS_JAVARUN_WORKSPACE = workspace;
+    delete globalThis._bsJavaRunConfig;
   }
 });
 
@@ -167,6 +181,65 @@ program
   .action(async (options) => {
     const code = await tokenCommand(options);
     process.exit(code);
+  });
+
+// 聚合目录启动组件管理命令。
+const workspace = program.command('workspace').description('生成、更新和校验聚合目录的启动组件');
+
+workspace
+  .command('init <directory>')
+  .description('生成目标目录的 javarun 转发脚本和 .bs-java-run 配置')
+  .action(async directory => {
+    try {
+      process.exit(await initWorkspace(directory));
+    } catch (error) {
+      console.error(`错误: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspace
+  .command('update <directory>')
+  .description('重新扫描项目并更新受托管启动组件')
+  .option('--configure', '重新录入运行环境、Nacos 和可用用户')
+  .action(async (directory, options) => {
+    try {
+      process.exit(await (options.configure ? reconfigureWorkspace(directory) : updateWorkspace(directory)));
+    } catch (error) {
+      console.error(`错误: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspace
+  .command('doctor <directory>')
+  .description('校验工作区配置、工具链和构建产物')
+  .action(async directory => {
+    try {
+      process.exit(await doctorWorkspace(directory));
+    } catch (error) {
+      console.error(`错误: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspace
+  .command('smoke <directory> [service]')
+  .description('显式启动冒烟，默认在就绪后停止本次进程')
+  .option('-e, --env <name>', '选择目标运行环境名')
+  .option('-P, --profile <name>', '兼容旧参数：选择命名运行环境')
+  .option('-b, --build', '冒烟前构建服务', false)
+  .option('-k, --keep-running', '就绪后保留本次启动的服务', false)
+  .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
+  .action(async (directory, service, options) => {
+    try {
+      process.env.BS_JAVARUN_WORKSPACE = directory;
+      delete globalThis._bsJavaRunConfig;
+      process.exit(await smokeWorkspace(directory, service, options));
+    } catch (error) {
+      console.error(`错误: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 program.parse();

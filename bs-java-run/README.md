@@ -71,6 +71,24 @@ bs-java-run token                       # 重新 headless 登录获取 token（�
 bs-java-run token --account prod-001    # 指定账户重新获取
 ```
 
+### 聚合目录工作区
+
+为多仓库聚合目录生成独立的启动配置与根目录快捷命令。首次初始化会交互录入运行环境、Nacos、登录连接信息和可用用户；密码无回显并仅写入工作区私有配置：
+
+```bash
+bs-java-run workspace init /path/to/reconciliation_all
+
+cd /path/to/reconciliation_all
+./javarun doctor                         # 校验 Java、Maven、配置和构建产物
+./javarun status                         # 使用工作区自己的日志/PID 目录
+./javarun up saas-data-gateway --env dev --yes
+./javarun smoke saas-data-gateway --env dev --build
+./javarun update                         # 重扫服务并更新受托管配置
+./javarun update --configure             # 重新录入环境、Nacos 和可用用户
+```
+
+初始化会在目标根目录生成 `javarun` 和 `.bs-java-run/`。后者的 `JAVARUN.md`、清单和日志由工具管理；`JAVARUN.local.md` 保存 Java 路径与用户密码，普通更新不会覆盖。`update --configure` 会先备份旧私有配置，再写入交互录入的值。生成的是轻量转发脚本，运行时仍依赖生成时记录的 `bs-java-run` 路径。
+
 配置文件分为共享模板 `JAVARUN.md` 与本机私有配置 `JAVARUN.local.md`：
 - **`JAVARUN.md`**：提交到 Git 仓库的公共标准模板。
 - **`JAVARUN.local.md`**：已加入 `.gitignore`，存放个人本机的源码绝对路径、个人测试账号密码与环境化运行配置。

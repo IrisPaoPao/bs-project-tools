@@ -8,6 +8,16 @@ const JAVARUN_MD = path.resolve(SCRIPT_DIR, '..', '..', 'JAVARUN.md');
 const JAVARUN_LOCAL_MD = path.resolve(SCRIPT_DIR, '..', '..', 'JAVARUN.local.md');
 const DEFAULT_STARTUP_TIMEOUT_SECONDS = 420;
 
+/**
+ * 工作区配置与运行时本体隔离：传入聚合目录时，配置、日志和 PID 都落在该目录的 .bs-java-run 中。
+ */
+export function resolveConfigDirectory(env = process.env) {
+  const workspace = String(env.BS_JAVARUN_WORKSPACE || '').trim();
+  return workspace
+    ? path.resolve(workspace, '.bs-java-run')
+    : path.dirname(JAVARUN_MD);
+}
+
 const RESERVED_JVM_KEYS = new Set([
   'server.port',
   'loader.path',
@@ -466,7 +476,8 @@ function findJavaHome(content) {
 }
 
 export function loadConfig(env = process.env, options = {}) {
-  const configFile = options.configFile || JAVARUN_MD;
+  const configDirectory = options.configDirectory || resolveConfigDirectory(env);
+  const configFile = options.configFile || path.join(configDirectory, 'JAVARUN.md');
   const localConfigFile = options.localConfigFile || path.join(path.dirname(configFile), 'JAVARUN.local.md');
   const content = readConfigFile(configFile);
   const localContent = readConfigFile(localConfigFile, false);
@@ -541,7 +552,8 @@ export function loadConfig(env = process.env, options = {}) {
     osJavaOpts,
     cliJavaOpts,
     startupTimeoutSeconds: resolveStartupTimeoutSeconds(env.BS_STARTUP_TIMEOUT),
-    logDir: env.LOG_DIR || path.resolve(SCRIPT_DIR, '..', '..', 'logs'),
+    logDir: env.LOG_DIR || path.join(path.dirname(configFile), 'logs'),
+    configDirectory: path.dirname(configFile),
   };
 }
 
