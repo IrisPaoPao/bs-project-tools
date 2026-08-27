@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { extractLoginToken, isLoginEndpoint, loadConfig, resolveAccount } = require('../../login-script.cjs');
+const { extractLoginToken, isLoginEndpoint, loadConfig, loadLoginConfig, resolveAccount } = require('../../login-script.cjs');
 
 test('extractLoginToken supports authorization and legacy token response wrappers', () => {
   assert.equal(extractLoginToken({ authorization: 'root-authorization' }), 'root-authorization');
@@ -47,4 +47,28 @@ test('login script reads the unified runtime environment table', () => {
   assert.equal(config.environments[0].name, '52test');
   assert.equal(account.loginUrl, 'http://login');
   assert.equal(account.loginApiPath, '/login');
+});
+
+test('login script reads a private account next to an explicitly provided workspace config file', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-workspace-login-'));
+  const configFile = path.join(dir, 'JAVARUN.md');
+  const localConfigFile = path.join(dir, 'JAVARUN.local.md');
+  writeFileSync(configFile, `## 运行环境
+
+| 环境名 | Nacos 主机 | Nacos 命名空间 | 登录地址 | 登录接口 | 行业网关 | Feign 上下文 | 服务端上下文 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| dev | host | namespace | http://login | POST /login | http://gateway | /feign | /server |
+`);
+  writeFileSync(localConfigFile, `## 账户定义
+
+| 账户别名 | 环境 | 主账号 | 用户名 | 密码 |
+| --- | --- | --- | --- | --- |
+| workspace-account | dev | tenant | user | password |
+`);
+
+  const config = loadLoginConfig({ env: {}, configFile });
+  const account = resolveAccount(config, 'workspace-account');
+
+  assert.equal(account.accountName, 'workspace-account');
+  assert.equal(account.envName, 'dev');
 });

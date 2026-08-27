@@ -1,4 +1,5 @@
 import { createRequire } from 'module';
+import path from 'path';
 import { getConfig } from '../lib/config.js';
 import { saveTokenToFile, saveLastAccount, loadLastAccount } from '../lib/token-cache.js';
 import { copyToClipboard } from '../lib/clipboard.js';
@@ -17,6 +18,14 @@ function maybeCopyToken(token, options) {
 
 const require = createRequire(import.meta.url);
 const { login } = require('../../login-script.cjs');
+
+/**
+ * 登录脚本独立运行时默认读取工具目录配置；CLI 调用时必须沿用已加载配置所在目录，
+ * 才能使工作区的 JAVARUN.local.md 与账户选择保持一致。
+ */
+export function getLoginConfigFile(config) {
+  return path.join(config.configDirectory, 'JAVARUN.md');
+}
 
 export function filterAccountsByEnvironment(accounts, environments, environmentName) {
   if (!environmentName) return accounts;
@@ -68,12 +77,17 @@ async function resolveAccountName(options, { preferLast = false } = {}) {
 }
 
 async function doLogin(options, { headless, preferLast = false }) {
+  const config = getConfig();
   const accountName = await resolveAccountName(options, { preferLast });
   if (!options.quiet) {
     info(`登录账户: ${accountName}`);
   }
 
-  const result = await login({ account: accountName, headless });
+  const result = await login({
+    account: accountName,
+    headless,
+    configFile: getLoginConfigFile(config),
+  });
 
   if (!result.success || !result.token) {
     if (options.quiet) console.error('登录失败');

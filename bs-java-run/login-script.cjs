@@ -196,8 +196,17 @@ function isLoginEndpoint(url, resolved) {
   );
 }
 
+function loadLoginConfig(options = {}) {
+  const configOptions = {
+    ...(options.configOptions || {}),
+    ...(options.configFile ? { configFile: options.configFile } : {}),
+    ...(options.localConfigFile ? { localConfigFile: options.localConfigFile } : {}),
+  };
+  return loadConfig(options.env || process.env, configOptions);
+}
+
 async function login(options = {}) {
-  const config = loadConfig(options.env || process.env, options.configOptions || {});
+  const config = loadLoginConfig(options);
   const resolved = resolveAccount(config, typeof options.account === 'string' ? options.account : null);
   const { headless = false, timeout = resolved.timeout, emitOutput = false } = options;
 
@@ -317,4 +326,4 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
-module.exports = { login, loadConfig, resolveAccount, extractLoginToken, isLoginEndpoint, JAVARUN_MD, JAVARUN_LOCAL_MD };
+module.exports = { login, loadConfig, loadLoginConfig, resolveAccount, extractLoginToken, isLoginEndpoint, JAVARUN_MD, JAVARUN_LOCAL_MD };
