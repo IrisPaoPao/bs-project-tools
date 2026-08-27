@@ -172,6 +172,64 @@ function extractLoginToken(response, headers = {}) {
   return headerToken;
 }
 
+const LOGIN_INPUTS = {
+  mainAccount: {
+    label: '主账号',
+    selectors: [
+      'input[placeholder="请输入主账号"]',
+      'input[placeholder="请输入您的主账号"]',
+    ],
+  },
+  username: {
+    label: '登录账号',
+    selectors: [
+      'input[placeholder="请输入登录账号"]',
+      'input[placeholder="请输入您的用户名"]',
+    ],
+  },
+  password: {
+    label: '密码',
+    selectors: [
+      'input[placeholder="请输入密码"]',
+      'input[placeholder="请输入您的密码"]',
+    ],
+  },
+};
+
+function getLoginInputSelector(field) {
+  const input = LOGIN_INPUTS[field];
+  if (!input) throw new Error(`未知登录输入框: ${field}`);
+  return input.selectors.join(', ');
+}
+
+function getLoginInputLocator(page, field) {
+  return page.locator(getLoginInputSelector(field)).first();
+}
+
+function isTimeoutError(error) {
+  return /timeout/i.test(error?.message || String(error || ''));
+}
+
+async function fillLoginInput(page, field, value, timeout) {
+  const input = LOGIN_INPUTS[field];
+  const locator = getLoginInputLocator(page, field);
+  try {
+    await locator.waitFor({ state: 'visible', timeout });
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new Error(`登录表单元素定位超时: 未找到${input.label}输入框`);
+    }
+    throw new Error(`登录表单元素定位失败: 无法定位${input.label}输入框 (${error.message})`);
+  }
+
+  try {
+    await locator.click();
+    await locator.fill(value);
+  } catch (error) {
+    throw new Error(`登录表单填写失败: 无法填写${input.label}输入框 (${error.message})`);
+  }
+}
+
 function diagnoseNetworkError(errMessage = '') {
   const msg = String(errMessage);
   if (msg.includes('ERR_NAME_NOT_RESOLVED')) {
@@ -223,6 +281,8 @@ async function login(options = {}) {
 
   let loginResponse = null;
   let loginToken = null;
+  let loginRequestFailure = null;
+  let loginResponseStatus = null;
 
   page.on('request', (request) => {
     if (!isLoginEndpoint(request.url(), resolved)) return;
@@ -233,6 +293,7 @@ async function login(options = {}) {
     const url = response.url();
     if (!isLoginEndpoint(url, resolved)) return;
 
+    loginResponseStatus = response.status();
     const headers = response.headers();
     let responseBody = null;
     try {
@@ -246,27 +307,39 @@ async function login(options = {}) {
     loginToken = responseToken;
   });
 
+  page.on('requestfailed', (request) => {
+    if (!isLoginEndpoint(request.url(), resolved)) return;
+    loginRequestFailure = request.failure()?.errorText || '未知网络错误';
+  });
+
   try {
     // 换用 domcontentloaded，避免 long polling / websocket 在 networkidle 阻塞
-    await page.goto(resolved.loginUrl, { waitUntil: 'domcontentloaded', timeout });
+    try {
+      await page.goto(resolved.loginUrl, { waitUntil: 'domcontentloaded', timeout });
+    } catch (error) {
+      const reason = isTimeoutError(error) ? '登录页加载超时' : '登录页加载失败';
+      throw new Error(`${reason}: ${error.message}`);
+    }
 
-    const mainAccountInput = page.locator('input[placeholder="请输入您的主账号"]');
-    await mainAccountInput.waitFor({ state: 'visible', timeout });
-    await mainAccountInput.click();
-    await mainAccountInput.fill(resolved.mainAccount);
-
-    const usernameInput = page.locator('input[placeholder="请输入您的用户名"]');
-    await usernameInput.click();
-    await usernameInput.fill(resolved.username);
-
-    const passwordInput = page.locator('input[placeholder="请输入您的密码"]');
-    await passwordInput.click();
-    await passwordInput.fill(resolved.password);
+    await fillLoginInput(page, 'mainAccount', resolved.mainAccount, timeout);
+    await fillLoginInput(page, 'username', resolved.username, timeout);
+    await fillLoginInput(page, 'password', resolved.password, timeout);
 
     const loginButton = page.locator('button.login-btn');
     await loginButton.click();
 
-    await page.waitForURL('**/portal', { timeout });
+    try {
+      await page.waitForURL('**/portal', { timeout });
+    } catch (error) {
+      if (loginRequestFailure) {
+        throw new Error(`登录请求失败: ${diagnoseNetworkError(loginRequestFailure)}`);
+      }
+      if (loginResponseStatus && (loginResponseStatus < 200 || loginResponseStatus >= 300)) {
+        throw new Error(`登录请求失败: 登录接口返回 HTTP ${loginResponseStatus}`);
+      }
+      const reason = isTimeoutError(error) ? '登录后跳转超时' : '登录后跳转失败';
+      throw new Error(`${reason}: 未跳转至 **/portal (${error.message})`);
+    }
     await page.waitForTimeout(1000);
 
     const token = loginToken || extractLoginToken(loginResponse);
@@ -292,7 +365,7 @@ async function login(options = {}) {
       throw new Error('未能获取到有效的登录 Token');
     }
   } catch (err) {
-    const diagnosedReason = diagnoseNetworkError(err.message);
+    const diagnosedReason = err.message;
     const result = {
       success: false,
       account: resolved.accountName,
@@ -326,4 +399,16 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
-module.exports = { login, loadConfig, loadLoginConfig, resolveAccount, extractLoginToken, isLoginEndpoint, JAVARUN_MD, JAVARUN_LOCAL_MD };
+module.exports = {
+  login,
+  loadConfig,
+  loadLoginConfig,
+  resolveAccount,
+  extractLoginToken,
+  getLoginInputSelector,
+  getLoginInputLocator,
+  fillLoginInput,
+  isLoginEndpoint,
+  JAVARUN_MD,
+  JAVARUN_LOCAL_MD,
+};

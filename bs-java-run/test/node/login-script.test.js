@@ -6,7 +6,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { extractLoginToken, isLoginEndpoint, loadConfig, loadLoginConfig, resolveAccount } = require('../../login-script.cjs');
+const {
+  extractLoginToken,
+  fillLoginInput,
+  getLoginInputSelector,
+  isLoginEndpoint,
+  loadConfig,
+  loadLoginConfig,
+  resolveAccount,
+} = require('../../login-script.cjs');
 
 test('extractLoginToken supports authorization and legacy token response wrappers', () => {
   assert.equal(extractLoginToken({ authorization: 'root-authorization' }), 'root-authorization');
@@ -23,6 +31,35 @@ test('isLoginEndpoint rejects unrelated business requests', () => {
   const resolved = { loginApiPath: '/saas/login' };
   assert.equal(isLoginEndpoint('http://example/saas/login', resolved), true);
   assert.equal(isLoginEndpoint('http://example/other/api', resolved), false);
+});
+
+test('login inputs support both current and legacy placeholder styles', () => {
+  assert.match(getLoginInputSelector('mainAccount'), /请输入主账号/);
+  assert.match(getLoginInputSelector('mainAccount'), /请输入您的主账号/);
+  assert.match(getLoginInputSelector('username'), /请输入登录账号/);
+  assert.match(getLoginInputSelector('username'), /请输入您的用户名/);
+  assert.match(getLoginInputSelector('password'), /请输入密码/);
+  assert.match(getLoginInputSelector('password'), /请输入您的密码/);
+});
+
+test('login input lookup timeout is diagnosed as a form locator failure', async () => {
+  let selector = '';
+  const page = {
+    locator(value) {
+      selector = value;
+      return {
+        first() { return this; },
+        async waitFor() { throw new Error('Timeout 1000ms exceeded'); },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => fillLoginInput(page, 'mainAccount', 'test-value', 1000),
+    /登录表单元素定位超时: 未找到主账号输入框/,
+  );
+  assert.match(selector, /请输入主账号/);
+  assert.match(selector, /请输入您的主账号/);
 });
 
 test('login script reads the unified runtime environment table', () => {
