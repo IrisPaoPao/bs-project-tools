@@ -51,6 +51,35 @@ function testSetup() {
   };
 }
 
+function environmentSetup(name, nacosHost = '127.0.0.1:8848') {
+  return {
+    javaHome: '',
+    environments: [{
+      name,
+      nacosHost,
+      nacosNamespace: `${name}-namespace`,
+      loginUrl: `http://${name}.example/login`,
+      loginApi: '/login',
+      industryGateway: '',
+      feignContextPath: '',
+      serverContextPath: '',
+    }],
+    accounts: [],
+  };
+}
+
+async function captureConsole(action) {
+  const original = console.log;
+  const output = [];
+  console.log = (...args) => output.push(args.join(' '));
+  try {
+    await action();
+  } finally {
+    console.log = original;
+  }
+  return output.join('\n');
+}
+
 test('workspace init generates isolated config, redacted local template and forwarding script', async () => {
   const root = createWorkspace();
   try {
@@ -119,24 +148,112 @@ test('workspace init requires interactive input when setup is not supplied', asy
   }
 });
 
-test('workspace reconfigure replaces user-entered connection settings and keeps a private backup', async () => {
+test('workspace configure merges a new environment, keeps accounts and generates both backups without leaking secrets', async () => {
   const root = createWorkspace();
   try {
-    await initWorkspace(root, { setup: testSetup() });
-    const replacement = testSetup();
-    replacement.environments[0] = { ...replacement.environments[0], name: 'workspace-test-2', nacosHost: '127.0.0.1:9848' };
-    replacement.accounts[0] = { ...replacement.accounts[0], name: 'workspace-user-2', env: 'workspace-test-2', password: 'replacement-password' };
-    await reconfigureWorkspace(root, { setup: replacement });
+    const initial = testSetup();
+    initial.environments[0].name = '52-saas-industry-dev';
+    initial.environments[0].nacosNamespace = '52-saas-industry-dev';
+    initial.accounts[0].env = '52-saas-industry-dev';
+    await initWorkspace(root, { setup: initial });
+    const output = await captureConsole(() => reconfigureWorkspace(root, {
+      setup: environmentSetup('84-saas-industry-dev', '127.0.0.1:9848'),
+    }));
 
     const configDir = path.join(root, '.bs-java-run');
     const managed = fs.readFileSync(path.join(configDir, 'JAVARUN.md'), 'utf8');
     const local = fs.readFileSync(path.join(configDir, 'JAVARUN.local.md'), 'utf8');
-    assert.match(managed, /workspace-test-2/);
-    assert.doesNotMatch(managed, /^\| workspace-test \|/m);
-    assert.match(local, /workspace-user-2/);
-    assert.match(local, /replacement-password/);
+    assert.match(managed, /^\| 52-saas-industry-dev \|/m);
+    assert.match(managed, /^\| 84-saas-industry-dev \|/m);
+    assert.match(managed, /^\| 84-saas-industry-dev \| demo-service \|/m);
+    assert.match(managed, /### 84-saas-industry-dev/);
+    assert.match(local, /workspace-user/);
+    assert.equal(loadConfig({ BS_JAVARUN_WORKSPACE: root, BS_ENV: '52-saas-industry-dev' }).activeEnv.name, '52-saas-industry-dev');
+    assert.equal(loadConfig({ BS_JAVARUN_WORKSPACE: root, BS_ENV: '84-saas-industry-dev' }).activeEnv.name, '84-saas-industry-dev');
+    assert.match(output, /环境 - 新增: 84-saas-industry-dev/);
+    assert.doesNotMatch(output, /test-password/);
+    assert.doesNotMatch(output, /127\.0\.0\.1:9848/);
+    assert.ok(fs.readdirSync(configDir).some(name => name.startsWith('JAVARUN.md.bak-')));
     assert.ok(fs.readdirSync(configDir).some(name => name.startsWith('JAVARUN.local.md.bak-')));
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace configure updates a same-name environment without changing other environments or accounts', async () => {
+  const root = createWorkspace();
+  try {
+    const initial = testSetup();
+    initial.environments[0].name = '52-saas-industry-dev';
+    initial.accounts[0].env = '52-saas-industry-dev';
+    await initWorkspace(root, { setup: initial });
+    await reconfigureWorkspace(root, { setup: environmentSetup('84-saas-industry-dev') });
+    await reconfigureWorkspace(root, { setup: environmentSetup('52-saas-industry-dev', '127.0.0.1:9848') });
+
+    const config = loadConfig({ BS_JAVARUN_WORKSPACE: root });
+    assert.equal(config.environments.find(item => item.name === '52-saas-industry-dev').nacosHost, '127.0.0.1:9848');
+    assert.ok(config.environments.some(item => item.name === '84-saas-industry-dev'));
+    assert.ok(config.accounts.some(item => item.name === 'workspace-user' && item.env === '52-saas-industry-dev'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace replace-all removes old environments only after explicit confirmation', async () => {
+  const root = createWorkspace();
+  try {
+    const initial = testSetup();
+    initial.environments[0].name = '52-saas-industry-dev';
+    initial.accounts[0].env = '52-saas-industry-dev';
+    await initWorkspace(root, { setup: initial });
+    await reconfigureWorkspace(root, { setup: environmentSetup('84-saas-industry-dev') });
+
+    const replacement = environmentSetup('84-saas-industry-dev', '127.0.0.1:9848');
+    await captureConsole(() => reconfigureWorkspace(root, {
+      setup: replacement,
+      replaceAll: true,
+      confirmReplaceAll: () => false,
+    }));
+    assert.ok(loadConfig({ BS_JAVARUN_WORKSPACE: root }).environments.some(item => item.name === '52-saas-industry-dev'));
+
+    await captureConsole(() => reconfigureWorkspace(root, {
+      setup: replacement,
+      replaceAll: true,
+      confirmReplaceAll: () => true,
+    }));
+    const config = loadConfig({ BS_JAVARUN_WORKSPACE: root });
+    assert.deepEqual(config.environments.map(item => item.name), ['84-saas-industry-dev']);
+    assert.equal(config.accounts.length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('workspace configure rolls back both configuration files when an atomic replacement fails', async () => {
+  const root = createWorkspace();
+  const originalRename = fs.renameSync;
+  try {
+    await initWorkspace(root, { setup: testSetup() });
+    const configDir = path.join(root, '.bs-java-run');
+    const managedFile = path.join(configDir, 'JAVARUN.md');
+    const localFile = path.join(configDir, 'JAVARUN.local.md');
+    const managedBefore = fs.readFileSync(managedFile, 'utf8');
+    const localBefore = fs.readFileSync(localFile, 'utf8');
+    let renameCount = 0;
+    fs.renameSync = (...args) => {
+      renameCount++;
+      if (renameCount === 2) throw new Error('simulated replace failure');
+      return originalRename(...args);
+    };
+
+    await assert.rejects(
+      () => reconfigureWorkspace(root, { setup: environmentSetup('84-saas-industry-dev') }),
+      /配置写入失败，原文件已回滚/,
+    );
+    assert.equal(fs.readFileSync(managedFile, 'utf8'), managedBefore);
+    assert.equal(fs.readFileSync(localFile, 'utf8'), localBefore);
+  } finally {
+    fs.renameSync = originalRename;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

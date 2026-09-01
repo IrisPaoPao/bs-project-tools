@@ -84,10 +84,11 @@ cd /path/to/reconciliation_all
 ./javarun up saas-data-gateway --env dev --yes
 ./javarun smoke saas-data-gateway --env dev --build
 ./javarun update                         # 重扫服务并更新受托管配置
-./javarun update --configure             # 重新录入环境、Nacos 和可用用户
+./javarun update --configure             # 合并录入环境、Nacos 和可用用户
+./javarun update --configure --replace-all # 全量覆盖（展示删除项后需二次确认）
 ```
 
-初始化会在目标根目录生成 `javarun` 和 `.bs-java-run/`。后者的 `JAVARUN.md`、清单和日志由工具管理；`JAVARUN.local.md` 保存 Java 路径与用户密码，普通更新不会覆盖。`update --configure` 会先备份旧私有配置，再写入交互录入的值。生成的是轻量转发脚本，运行时仍依赖生成时记录的 `bs-java-run` 路径。
+初始化会在目标根目录生成 `javarun` 和 `.bs-java-run/`。后者的 `JAVARUN.md`、清单和日志由工具管理；`JAVARUN.local.md` 保存 Java 路径与用户密码，普通更新不会覆盖。`update --configure` 默认按名称合并：新增环境会保留现有环境及账户，同名环境只更新其连接配置，账户可跳过并在登录前补充。每次配置写入前都会输出不含敏感值的差异摘要，并同时备份共享与私有配置。只有 `--replace-all` 可删除未重新录入的环境或账户，且会展示删除项并二次确认。生成的是轻量转发脚本，运行时仍依赖生成时记录的 `bs-java-run` 路径。
 
 配置文件分为共享模板 `JAVARUN.md` 与本机私有配置 `JAVARUN.local.md`：
 - **`JAVARUN.md`**：提交到 Git 仓库的公共标准模板。

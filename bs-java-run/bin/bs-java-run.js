@@ -201,10 +201,16 @@ workspace
 workspace
   .command('update <directory>')
   .description('重新扫描项目并更新受托管启动组件')
-  .option('--configure', '重新录入运行环境、Nacos 和可用用户')
+  .option('--configure', '交互式合并录入运行环境、Nacos 和可用用户')
+  .option('--replace-all', '仅与 --configure 一起使用：全量覆盖未重新录入的环境和账户')
   .action(async (directory, options) => {
     try {
-      process.exit(await (options.configure ? reconfigureWorkspace(directory) : updateWorkspace(directory)));
+      if (options.replaceAll && !options.configure) {
+        throw new Error('--replace-all 只能与 --configure 一起使用');
+      }
+      process.exit(await (options.configure
+        ? reconfigureWorkspace(directory, { replaceAll: options.replaceAll })
+        : updateWorkspace(directory)));
     } catch (error) {
       console.error(`错误: ${error.message}`);
       process.exit(1);

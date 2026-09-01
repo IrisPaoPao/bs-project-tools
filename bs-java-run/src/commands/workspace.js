@@ -73,7 +73,7 @@ async function askSecret(prompt) {
     const restore = () => {
       input.removeListener('data', onData);
       input.setRawMode(false);
-      input.pause();
+      // 外层 readline 仍需继续读取后续问题，不能在密码录入后暂停标准输入。
     };
     const onData = data => {
       for (const char of data.toString('utf8')) {
@@ -131,54 +131,128 @@ function validateSetup(setup) {
   };
 }
 
-/** 首次生成由用户显式确认连接目标和账号，不继承当前工具的环境或用户。 */
-async function promptWorkspaceSetup(defaultJavaHome) {
+function cloneSetup(setup) {
+  return {
+    javaHome: setup.javaHome,
+    environments: setup.environments.map(environment => ({ ...environment })),
+    accounts: setup.accounts.map(account => ({ ...account })),
+  };
+}
+
+function printExistingEnvironments(config) {
+  const names = config.environments.map(environment => environment.name);
+  console.log(`当前已有环境: ${names.length ? names.join('、') : '无'}`);
+}
+
+async function promptEnvironment(defaults, readline) {
+  const name = defaults?.name || await askQuestion('运行环境名', { required: true }, readline);
+  const nacosHost = await askQuestion('Nacos 主机（host:port）', { required: true, defaultValue: defaults?.nacosHost }, readline);
+  const nacosNamespace = await askQuestion('Nacos 命名空间', { defaultValue: defaults?.nacosNamespace }, readline);
+  const loginUrl = await askQuestion('登录页面地址', { required: true, defaultValue: defaults?.loginUrl }, readline);
+  const loginApi = await askQuestion('登录接口（例如 POST /saas/login）', { required: true, defaultValue: defaults?.loginApi }, readline);
+  const industryGateway = await askQuestion('行业网关地址', { defaultValue: defaults?.industryGateway }, readline);
+  const feignContextPath = await askQuestion('Feign 上下文（可留空）', { defaultValue: defaults?.feignContextPath }, readline);
+  const serverContextPath = await askQuestion('服务端上下文（可留空）', { defaultValue: defaults?.serverContextPath }, readline);
+  return {
+    name,
+    nacosHost,
+    nacosNamespace,
+    loginUrl,
+    loginApi: loginApi.replace(/^[A-Z]+\s+/, ''),
+    industryGateway,
+    feignContextPath,
+    serverContextPath,
+  };
+}
+
+async function promptAccountsForEnvironment(environmentName, accounts, readline) {
+  const configureAccount = /^(y|yes|是)$/i.test(await askQuestion(
+    '账户配置：添加账户？（输入 y 添加，直接回车跳过账户配置）',
+    { defaultValue: 'n' },
+    readline,
+  ));
+  if (!configureAccount) return;
+
+  let addAccount = true;
+  while (addAccount) {
+    const accountName = await askQuestion('可用用户别名', { required: true, defaultValue: `${environmentName}-account` }, readline);
+    const mainAccount = await askQuestion('主账号（可留空）', {}, readline);
+    const username = await askQuestion('用户名', { required: true }, readline);
+    const password = await askSecret('密码（无回显）');
+    if (!password) {
+      console.log('密码不能为空，请重新录入该用户。');
+      continue;
+    }
+    const index = accounts.findIndex(account => account.name === accountName);
+    const account = { name: accountName, env: environmentName, mainAccount, username, password };
+    if (index >= 0) accounts[index] = account;
+    else accounts.push(account);
+    addAccount = /^(y|yes|是)$/i.test(await askQuestion('继续添加该环境的用户？(Y/n)', { defaultValue: 'n' }, readline));
+  }
+}
+
+/**
+ * 配置工作区时仅收集用户本次操作的环境；默认合并由调用方完成，避免录入一个新环境时丢失其它环境。
+ * replaceAll 模式以当前配置为草稿，用户可显式删除不再保留的环境和关联账户。
+ */
+async function promptWorkspaceSetup(defaultJavaHome, currentConfig = null, { replaceAll = false } = {}) {
   if (!process.stdin.isTTY) {
-    throw new Error('workspace init 需要交互式终端录入运行环境、Nacos 和可用用户；请在终端中执行');
+    throw new Error('工作区配置需要交互式终端录入运行环境、Nacos 和可用用户；请在终端中执行');
   }
   const readline = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    console.log('\n请录入目标工作区的运行环境连接信息（不会迁移当前工具的环境或账号）。');
+    if (currentConfig) printExistingEnvironments(currentConfig);
+    console.log('\n请选择：新增环境、编辑已有环境、删除环境、完成。账户可在每次环境录入后跳过，登录时再补充。');
     const javaHome = await askQuestion('JDK 根目录', { defaultValue: defaultJavaHome }, readline);
-    const environments = [];
-    const accounts = [];
-    let addEnvironment = true;
-    while (addEnvironment) {
-      const name = await askQuestion('运行环境名', { required: true }, readline);
-      const nacosHost = await askQuestion('Nacos 主机（host:port）', { required: true }, readline);
-      const nacosNamespace = await askQuestion('Nacos 命名空间', {}, readline);
-      const loginUrl = await askQuestion('登录页面地址', { required: true }, readline);
-      const loginApi = await askQuestion('登录接口（例如 POST /saas/login）', { required: true }, readline);
-      const industryGateway = await askQuestion('行业网关地址', {}, readline);
-      const feignContextPath = await askQuestion('Feign 上下文（可留空）', {}, readline);
-      const serverContextPath = await askQuestion('服务端上下文（可留空）', {}, readline);
-      environments.push({
-        name,
-        nacosHost,
-        nacosNamespace,
-        loginUrl,
-        loginApi: loginApi.replace(/^[A-Z]+\s+/, ''),
-        industryGateway,
-        feignContextPath,
-        serverContextPath,
-      });
-
-      let addAccount = true;
-      while (addAccount) {
-        const accountName = await askQuestion('可用用户别名', { required: true, defaultValue: `${name}-account` }, readline);
-        const mainAccount = await askQuestion('主账号（可留空）', {}, readline);
-        const username = await askQuestion('用户名', { required: true }, readline);
-        const password = await askSecret('密码（无回显）');
-        if (!password) {
-          console.log('密码不能为空，请重新录入该用户。');
+    const draft = replaceAll && currentConfig
+      ? cloneSetup({ javaHome, environments: currentConfig.environments, accounts: currentConfig.accounts })
+      : { javaHome, environments: [], accounts: [] };
+    while (true) {
+      const action = await askQuestion('操作（新增/编辑/删除/完成）', { required: true, defaultValue: '完成' }, readline);
+      if (action === '完成') break;
+      if (action === '新增') {
+        const environment = await promptEnvironment(null, readline);
+        if (draft.environments.some(item => item.name === environment.name)) {
+          console.log(`环境已存在，请使用“编辑”：${environment.name}`);
           continue;
         }
-        accounts.push({ name: accountName, env: name, mainAccount, username, password });
-        addAccount = /^(y|yes|是)?$/i.test(await askQuestion('继续添加该环境的用户？(Y/n)', { defaultValue: 'n' }, readline));
+        draft.environments.push(environment);
+        await promptAccountsForEnvironment(environment.name, draft.accounts, readline);
+        continue;
       }
-      addEnvironment = /^(y|yes|是)$/i.test(await askQuestion('继续添加运行环境？(y/N)', { defaultValue: 'n' }, readline));
+      if (action === '编辑') {
+        const name = await askQuestion('要编辑的环境名', { required: true }, readline);
+        const existing = (replaceAll ? draft.environments : currentConfig?.environments || []).find(item => item.name === name);
+        if (!existing) {
+          console.log(`未找到环境: ${name}`);
+          continue;
+        }
+        const environment = await promptEnvironment(existing, readline);
+        const index = draft.environments.findIndex(item => item.name === name);
+        if (index >= 0) draft.environments[index] = environment;
+        else draft.environments.push(environment);
+        await promptAccountsForEnvironment(environment.name, draft.accounts, readline);
+        continue;
+      }
+      if (action === '删除') {
+        if (!replaceAll) {
+          console.log('默认合并更新不会删除环境；如需删除请使用 --replace-all。');
+          continue;
+        }
+        const name = await askQuestion('要删除的环境名', { required: true }, readline);
+        const before = draft.environments.length;
+        draft.environments = draft.environments.filter(environment => environment.name !== name);
+        if (draft.environments.length === before) {
+          console.log(`未找到环境: ${name}`);
+          continue;
+        }
+        draft.accounts = draft.accounts.filter(account => account.env !== name);
+        console.log(`已标记删除环境及其账户: ${name}`);
+        continue;
+      }
+      console.log('请输入：新增、编辑、删除 或 完成。');
     }
-    return validateSetup({ javaHome, environments, accounts });
+    return validateSetup(draft);
   } finally {
     readline.close();
   }
@@ -292,14 +366,13 @@ function discoverWorkspace(root, existingConfig) {
 function selectWorkspaceEnvironmentData(config, services) {
   const names = new Set(services.map(service => service.name));
   const envServiceRows = config.environmentServices.filter(row => names.has(row.serviceName));
-  const activeEnvNames = new Set(envServiceRows.map(row => row.envName));
-  // 用户刚录入环境时尚无环境服务行，将所有已录入环境关联到扫描出的服务。
-  if (activeEnvNames.size === 0) {
-    for (const environment of config.environments) activeEnvNames.add(environment.name);
-  }
+  // 每个运行环境都必须在共享配置中保留，即使刚新增、尚未设置专属 JVM 参数。
+  const activeEnvNames = new Set(config.environments.map(environment => environment.name));
   const environments = config.environments.filter(environment => activeEnvNames.has(environment.name));
-  const groups = [...config.jvmOptionGroups.entries()]
-    .filter(([name]) => activeEnvNames.has(name));
+  const groups = environments.map(environment => [
+    environment.name,
+    [...(config.jvmOptionGroups.get(environment.name) || [])],
+  ]);
 
   // 自动推断出的服务需在可迁移的每个环境中可启动。
   for (const environment of environments) {
@@ -386,7 +459,99 @@ function createRuntimeConfig(setup) {
   };
 }
 
-function writeManifest(paths, output) {
+function mergeByName(current, incoming) {
+  const merged = new Map(current.map(item => [item.name, { ...item }]));
+  for (const item of incoming) merged.set(item.name, { ...item });
+  return [...merged.values()];
+}
+
+/**
+ * 默认只用同名记录覆盖连接或账户，未录入的环境及账户始终保留；replaceAll 才以本次录入作为完整集合。
+ * 环境服务和 JVM 参数组按环境名保留，新增环境由渲染阶段自动获得服务行和空参数组。
+ */
+function mergeRuntimeConfig(currentConfig, setup, replaceAll) {
+  const environments = replaceAll
+    ? setup.environments.map(environment => ({ ...environment }))
+    : mergeByName(currentConfig.environments, setup.environments);
+  const environmentNames = new Set(environments.map(environment => environment.name));
+  const accounts = (replaceAll
+    ? setup.accounts
+    : mergeByName(currentConfig.accounts, setup.accounts))
+    .filter(account => environmentNames.has(account.env));
+  const jvmOptionGroups = new Map();
+  for (const [name, options] of currentConfig.jvmOptionGroups) {
+    if (environmentNames.has(name)) jvmOptionGroups.set(name, [...options]);
+  }
+  for (const environment of environments) {
+    if (!jvmOptionGroups.has(environment.name)) jvmOptionGroups.set(environment.name, []);
+  }
+  return {
+    javaHome: setup.javaHome || currentConfig.javaHome,
+    environments,
+    accounts,
+    environmentServices: currentConfig.environmentServices
+      .filter(item => environmentNames.has(item.envName))
+      .map(item => ({ ...item })),
+    jvmOptionGroups,
+  };
+}
+
+function changeSummary(current, next, keys) {
+  const currentByName = new Map(current.map(item => [item.name, item]));
+  const nextByName = new Map(next.map(item => [item.name, item]));
+  const added = [];
+  const modified = [];
+  const deleted = [];
+  for (const [name, item] of nextByName) {
+    const before = currentByName.get(name);
+    if (!before) added.push(name);
+    else if (keys.some(key => before[key] !== item[key])) modified.push(name);
+  }
+  for (const name of currentByName.keys()) {
+    if (!nextByName.has(name)) deleted.push(name);
+  }
+  return { added, modified, deleted };
+}
+
+function formatChangeItems(items) {
+  return items.length ? items.join('、') : '无';
+}
+
+/** 只显示环境名和账户别名，连接内容、密码、Token 等敏感值均不进入控制台。 */
+function printConfigurationDiff(currentConfig, nextConfig) {
+  const environments = changeSummary(currentConfig.environments, nextConfig.environments, [
+    'nacosHost', 'nacosNamespace', 'loginUrl', 'loginApi', 'industryGateway', 'feignContextPath', 'serverContextPath',
+  ]);
+  const accounts = changeSummary(currentConfig.accounts, nextConfig.accounts, [
+    'env', 'mainAccount', 'username', 'password',
+  ]);
+  console.log('配置差异摘要（已脱敏）：');
+  console.log(`环境 - 新增: ${formatChangeItems(environments.added)}；修改: ${formatChangeItems(environments.modified)}；删除: ${formatChangeItems(environments.deleted)}`);
+  console.log(`账户别名 - 新增: ${formatChangeItems(accounts.added)}；修改: ${formatChangeItems(accounts.modified)}；删除: ${formatChangeItems(accounts.deleted)}`);
+  return { environments, accounts };
+}
+
+async function confirmReplaceAll(options) {
+  if (typeof options.confirmReplaceAll === 'function') {
+    return Boolean(await options.confirmReplaceAll());
+  }
+  // 仅供内部调用测试注入；CLI 不会传入该选项，真实命令始终要求交互确认。
+  if (options.confirmReplaceAll === true) return true;
+  if (!process.stdin.isTTY) {
+    throw new Error('--replace-all 需要交互式终端二次确认');
+  }
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const first = await askQuestion('确认按上述差异全量覆盖？(y/N)', { defaultValue: 'n' }, readline);
+    if (!/^(y|yes|是)$/i.test(first)) return false;
+    const second = await askQuestion('再次确认：未重新录入的环境和账户将被删除，继续？(y/N)', { defaultValue: 'n' }, readline);
+    return /^(y|yes|是)$/i.test(second);
+  } finally {
+    readline.close();
+  }
+}
+
+function renderManifest(output) {
   const manifest = {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -395,19 +560,92 @@ function writeManifest(paths, output) {
     services: output.discovery.services,
     inference: output.discovery.sources,
   };
-  fs.writeFileSync(paths.manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+function generatedFileEntries(output, { writeLocal }) {
+  const { paths } = output;
+  const entries = [
+    { file: paths.configFile, content: output.managedConfig },
+    { file: path.join(paths.configDir, '.gitignore'), content: `${LOCAL_CONFIG_NAME}\nlogs/\n*.pid\n` },
+    { file: paths.wrapperFile, content: renderWrapper(), mode: 0o755 },
+  ];
+  if (writeLocal) entries.push({ file: paths.localFile, content: output.localTemplate });
+  entries.push({ file: paths.manifestFile, content: renderManifest(output) });
+  return entries;
 }
 
 function writeGeneratedFiles(output, { writeLocal }) {
   const { paths } = output;
   fs.mkdirSync(paths.configDir, { recursive: true });
   fs.mkdirSync(path.join(paths.configDir, 'logs'), { recursive: true });
-  fs.writeFileSync(paths.configFile, output.managedConfig, 'utf8');
-  fs.writeFileSync(path.join(paths.configDir, '.gitignore'), `${LOCAL_CONFIG_NAME}\nlogs/\n*.pid\n`, 'utf8');
-  fs.writeFileSync(paths.wrapperFile, renderWrapper(), { mode: 0o755 });
-  fs.chmodSync(paths.wrapperFile, 0o755);
-  if (writeLocal) fs.writeFileSync(paths.localFile, output.localTemplate, 'utf8');
-  writeManifest(paths, output);
+  for (const entry of generatedFileEntries(output, { writeLocal })) {
+    fs.writeFileSync(entry.file, entry.content, { encoding: 'utf8', mode: entry.mode });
+    if (entry.mode) fs.chmodSync(entry.file, entry.mode);
+  }
+}
+
+function nextBackupFile(file, timestamp) {
+  const base = `${file}.bak-${timestamp}`;
+  if (!fs.existsSync(base)) return base;
+  let sequence = 1;
+  while (fs.existsSync(`${base}-${sequence}`)) sequence++;
+  return `${base}-${sequence}`;
+}
+
+/** 每次配置前都创建共享与私有配置的同时间戳备份，私有文件缺失时保留空白备份以便审计。 */
+function backupConfigurationFiles(paths, managedContent, localContent) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.writeFileSync(nextBackupFile(paths.configFile, timestamp), managedContent, 'utf8');
+  fs.writeFileSync(nextBackupFile(paths.localFile, timestamp), localContent, 'utf8');
+}
+
+function stageAtomicFiles(entries) {
+  return entries.map((entry, index) => {
+    const tempFile = path.join(path.dirname(entry.file), `.${path.basename(entry.file)}.${process.pid}.${Date.now()}.${index}.tmp`);
+    fs.writeFileSync(tempFile, entry.content, { encoding: 'utf8', mode: entry.mode });
+    if (entry.mode) fs.chmodSync(tempFile, entry.mode);
+    return { ...entry, tempFile };
+  });
+}
+
+/**
+ * 多文件写入先全部落盘到同目录临时文件，再逐个原子替换；任何替换失败即回滚已替换目标。
+ * 这避免配置、账户、清单之间出现持久化的半写入状态。
+ */
+function writeFilesAtomically(entries) {
+  const originals = new Map(entries.map(entry => [entry.file, fs.existsSync(entry.file)
+    ? { exists: true, content: fs.readFileSync(entry.file, 'utf8'), mode: fs.statSync(entry.file).mode }
+    : { exists: false }]));
+  let staged = [];
+  const replaced = [];
+  try {
+    staged = stageAtomicFiles(entries);
+    for (const entry of staged) {
+      fs.renameSync(entry.tempFile, entry.file);
+      replaced.push(entry.file);
+    }
+  } catch (error) {
+    for (const file of replaced.reverse()) {
+      const original = originals.get(file);
+      try {
+        if (original.exists) {
+          const rollback = `${file}.${process.pid}.${Date.now()}.rollback`;
+          fs.writeFileSync(rollback, original.content, { encoding: 'utf8', mode: original.mode });
+          fs.renameSync(rollback, file);
+        } else if (fs.existsSync(file)) {
+          fs.unlinkSync(file);
+        }
+      } catch {
+        // 保留原始写入错误；极端文件系统异常下由备份文件协助人工恢复。
+      }
+    }
+    throw new Error(`配置写入失败，原文件已回滚: ${error.message}`);
+  } finally {
+    for (const entry of staged) {
+      if (fs.existsSync(entry.tempFile)) fs.unlinkSync(entry.tempFile);
+    }
+  }
 }
 
 /** 首次初始化只创建新工作区，防止意外覆盖已有聚合目录配置。 */
@@ -449,7 +687,10 @@ export async function updateWorkspace(directory) {
   return 0;
 }
 
-/** 用户显式要求重新录入连接配置时，保留旧私有文件副本再替换。 */
+/**
+ * 用户显式要求重新录入连接配置时，默认按环境名合并；只有 replaceAll 才允许删除未录入环境和账户。
+ * 写入前始终输出脱敏摘要、备份共享和私有配置，并通过多文件原子替换避免半写入。
+ */
 export async function reconfigureWorkspace(directory, options = {}) {
   const paths = assertWorkspaceDirectory(directory);
   if (!fs.existsSync(paths.manifestFile) || !fs.existsSync(paths.configFile)) {
@@ -463,16 +704,27 @@ export async function reconfigureWorkspace(directory, options = {}) {
 
   const workspaceEnv = { ...process.env, BS_JAVARUN_WORKSPACE: paths.root };
   const currentConfig = loadConfig(workspaceEnv);
-  const setup = options.setup ? validateSetup(options.setup) : await promptWorkspaceSetup(currentConfig.javaHome);
-  const output = buildOutput(directory, createRuntimeConfig(setup), currentConfig);
-  output.localTemplate = renderLocalTemplate(setup.javaHome, setup.accounts);
+  const replaceAll = Boolean(options.replaceAll);
+  const setup = options.setup
+    ? validateSetup(options.setup)
+    : await promptWorkspaceSetup(currentConfig.javaHome, currentConfig, { replaceAll });
+  const nextConfig = mergeRuntimeConfig(currentConfig, setup, replaceAll);
+  const output = buildOutput(directory, nextConfig, currentConfig);
+  output.localTemplate = renderLocalTemplate(nextConfig.javaHome, nextConfig.accounts);
+  printConfigurationDiff(currentConfig, nextConfig);
 
-  if (fs.existsSync(paths.localFile)) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.copyFileSync(paths.localFile, `${paths.localFile}.bak-${timestamp}`);
+  if (replaceAll && !await confirmReplaceAll(options)) {
+    console.log('已取消全量覆盖，工作区配置未修改。');
+    return 0;
   }
-  writeGeneratedFiles(output, { writeLocal: true });
-  console.log(`已重新录入工作区连接配置: ${paths.root}`);
+
+  const managedContent = fs.readFileSync(paths.configFile, 'utf8');
+  const localContent = fs.existsSync(paths.localFile) ? fs.readFileSync(paths.localFile, 'utf8') : '';
+  backupConfigurationFiles(paths, managedContent, localContent);
+  fs.mkdirSync(paths.configDir, { recursive: true });
+  fs.mkdirSync(path.join(paths.configDir, 'logs'), { recursive: true });
+  writeFilesAtomically(generatedFileEntries(output, { writeLocal: true }));
+  console.log(`已${replaceAll ? '全量覆盖' : '合并更新'}工作区连接配置: ${paths.root}`);
   return 0;
 }
 
