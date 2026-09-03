@@ -87,7 +87,7 @@ def issue_show(ctx, issue_key: str):
 @click.option("--type", "-t", "issue_type", default="Task", show_default=True, help="Issue 类型")
 @click.option("--summary", "-s", required=True, help="摘要/标题")
 @click.option("--description", "-d", "desc", default="", help="描述")
-@click.option("--assignee", "-a", default=None, help="经办人用户名")
+@click.option("--assignee", "-a", default=None, help="经办人用户名（默认当前用户，传 none 为不分配）")
 @click.option("--priority", "-p", default=None, help="优先级 (Highest/High/Medium/Low/Lowest)")
 @click.option("--labels", "-l", default=None, help="标签（逗号分隔）")
 @click.pass_context
@@ -98,6 +98,12 @@ def issue_create(ctx, project_key, issue_type, summary, desc, assignee, priority
     """
     from jira_cli.main import get_client
     client = get_client(ctx)
+
+    # 经办人：不指定或传 me 时默认当前用户；传 none 或留空则不分配
+    if assignee is None or (isinstance(assignee, str) and assignee.lower() == "me"):
+        assignee = client.username
+    elif isinstance(assignee, str) and (assignee.lower() == "none" or not assignee.strip()):
+        assignee = None
 
     fields = {
         "project": {"key": project_key.upper()},
@@ -127,7 +133,7 @@ def issue_create(ctx, project_key, issue_type, summary, desc, assignee, priority
 @click.argument("issue_key")
 @click.option("--summary", "-s", default=None, help="更新摘要")
 @click.option("--description", "-d", "desc", default=None, help="更新描述")
-@click.option("--assignee", "-a", default=None, help="更新经办人")
+@click.option("--assignee", "-a", default=None, help="更新经办人（传 me 为当前用户，传 none 为清空）")
 @click.option("--priority", "-p", default=None, help="更新优先级")
 @click.option("--labels", "-l", default=None, help="更新标签（逗号分隔）")
 @click.pass_context
@@ -145,6 +151,10 @@ def issue_update(ctx, issue_key, summary, desc, assignee, priority, labels):
     if desc is not None:
         fields["description"] = desc
     if assignee is not None:
+        if assignee.lower() == "me":
+            assignee = client.username
+        elif assignee.lower() == "none" or not assignee.strip():
+            assignee = None
         fields["assignee"] = {"name": assignee} if assignee else None
     if priority is not None:
         fields["priority"] = {"name": priority}

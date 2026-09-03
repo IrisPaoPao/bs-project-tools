@@ -79,7 +79,7 @@ bsq-jira issue show YLZHXT-1234
 bsq-jira issue assign YLZHXT-1234 zhangsan          # 指派给 zhangsan
 bsq-jira issue assign YLZHXT-1234                   # 不填人名则自动指派给自己
 
-# 创建 Issue
+# 创建 Issue（经办人默认当前登录用户，传 -a none 可设为未分配）
 bsq-jira issue create PROJ --summary "修复登录Bug" --type Bug --description "详细描述"
 bsq-jira issue create PROJ -s "新需求" -t Story -a zhangsan -p High
 
