@@ -317,6 +317,27 @@ class JiraClient:
         """
         return self._request("POST", f"/issue/{issue_key}/comment", json={"body": body})
 
+    def get_comment(self, issue_key: str, comment_id: str) -> dict:
+        """获取单个评论详情
+
+        Args:
+            issue_key: Issue Key
+            comment_id: 评论 ID
+
+        Returns:
+            评论对象字典
+        """
+        return self._request("GET", f"/issue/{issue_key}/comment/{comment_id}")
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> None:
+        """删除评论
+
+        Args:
+            issue_key: Issue Key
+            comment_id: 评论 ID
+        """
+        self._request("DELETE", f"/issue/{issue_key}/comment/{comment_id}")
+
     def assign_issue(self, issue_key: str, assignee: str) -> None:
         """分配任务给指定用户
 

@@ -336,7 +336,9 @@ def print_comments(comments: list, issue_key: str):
         updated = _format_datetime(comment.get("updated", ""))
         body = comment.get("body", "")
 
-        header = f"[bold]{author}[/bold]  [dim]{created}[/dim]"
+        comment_id = comment.get("id")
+        id_prefix = f"[cyan]#{comment_id}[/cyan] " if comment_id else ""
+        header = f"{id_prefix}[bold]{author}[/bold]  [dim]{created}[/dim]"
         if created != updated:
             header += f"  [dim](编辑于 {updated})[/dim]"
 

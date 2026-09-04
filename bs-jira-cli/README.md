@@ -95,8 +95,10 @@ bsq-jira issue transition PROJ-123 --to "In Progress"  # 变更状态
 
 ```bash
 bsq-jira project list                  # 列出所有项目
-bsq-jira comment list PROJ-123         # 查看评论
+bsq-jira comment list PROJ-123         # 查看评论（包含评论 ID）
 bsq-jira comment add PROJ-123          # 交互式输入评论
+bsq-jira comment add PROJ-123 -b "内容" # 直接添加评论
+bsq-jira comment delete PROJ-123 10523 # 删除指定评论（支持别名 rm / remove，可加 -y 跳过确认）
 ```
 
 ## 技术特性与约束

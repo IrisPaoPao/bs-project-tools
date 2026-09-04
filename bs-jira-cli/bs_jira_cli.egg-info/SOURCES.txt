@@ -12,6 +12,8 @@ jira_cli/config.py
 jira_cli/formatter.py
 jira_cli/main.py
 jira_cli/commands/__init__.py
+jira_cli/commands/alias.py
+jira_cli/commands/attachment.py
 jira_cli/commands/comment.py
 jira_cli/commands/issue.py
 jira_cli/commands/project.py
