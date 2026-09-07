@@ -10,6 +10,7 @@ from jira_cli.formatter import (
     print_success,
     print_error,
     print_warning,
+    print_create_meta,
     console,
 )
 
@@ -82,22 +83,63 @@ def issue_show(ctx, issue_key: str):
         raise SystemExit(1)
 
 
+@issue_group.command("create-meta")
+@click.argument("project_key")
+@click.option("--type", "-t", "issue_type", default=None, help="按 Issue 类型筛选（如'编码任务'）")
+@click.option("--raw", is_flag=True, help="直接输出原生原始 JSON 数据")
+@click.pass_context
+def issue_create_meta(ctx, project_key, issue_type, raw):
+    """查询项目的 Issue 创建元数据（类型、必填字段、组件及优先级）
+
+    PROJECT_KEY: 项目 Key，如 YLZHXT
+    """
+    import json
+    from jira_cli.main import get_client
+    client = get_client(ctx)
+    project_key = project_key.upper()
+
+    try:
+        meta = client.get_create_meta(project_key, issue_type)
+        components = client.get_project_components(project_key)
+    except JiraAPIError as e:
+        print_error(f"获取项目元数据失败: {e}")
+        raise SystemExit(1)
+
+    if raw:
+        console.print_json(json.dumps({"meta": meta, "components": components}))
+        return
+
+    print_create_meta(project_key, meta, components, target_type=issue_type)
+
+
 @issue_group.command("create")
 @click.argument("project_key")
-@click.option("--type", "-t", "issue_type", default="Task", show_default=True, help="Issue 类型")
+@click.option(
+    "--type", "-t", "issue_type",
+    required=True,
+    help="Issue 类型（如'编码任务'、'Task'等，必须与项目元数据一致）"
+)
 @click.option("--summary", "-s", required=True, help="摘要/标题")
-@click.option("--description", "-d", "desc", default="", help="描述")
+@click.option("--description", "-d", "desc", default="", help="详细描述")
+@click.option(
+    "--component", "-c", "components",
+    multiple=True,
+    help="模块/组件名称（如'08-智慧对账'，支持多次指定或逗号分隔，CLI 将自动转为 ID）"
+)
 @click.option("--assignee", "-a", default=None, help="经办人用户名（默认当前用户，传 none 为不分配）")
-@click.option("--priority", "-p", default=None, help="优先级 (Highest/High/Medium/Low/Lowest)")
+@click.option("--priority", "-p", default=None, help="优先级名称（需与项目元数据中的合法值一致）")
 @click.option("--labels", "-l", default=None, help="标签（逗号分隔）")
 @click.pass_context
-def issue_create(ctx, project_key, issue_type, summary, desc, assignee, priority, labels):
+def issue_create(ctx, project_key, issue_type, summary, desc, components, assignee, priority, labels):
     """创建 Issue
 
-    PROJECT_KEY: 项目 Key
+    PROJECT_KEY: 目标项目 Key，如 YLZHXT
+
+    注意：建议在创建前先运行 `bsq-jira issue create-meta PROJECT_KEY` 预检该项目的有效类型、必填字段及组件列表。
     """
     from jira_cli.main import get_client
     client = get_client(ctx)
+    project_key = project_key.upper()
 
     # 经办人：不指定或传 me 时默认当前用户；传 none 或留空则不分配
     if assignee is None or (isinstance(assignee, str) and assignee.lower() == "me"):
@@ -106,7 +148,7 @@ def issue_create(ctx, project_key, issue_type, summary, desc, assignee, priority
         assignee = None
 
     fields = {
-        "project": {"key": project_key.upper()},
+        "project": {"key": project_key},
         "summary": summary,
         "issuetype": {"name": issue_type},
     }
@@ -119,6 +161,30 @@ def issue_create(ctx, project_key, issue_type, summary, desc, assignee, priority
         fields["priority"] = {"name": priority}
     if labels:
         fields["labels"] = [l.strip() for l in labels.split(",")]
+
+    # 组件名称转 ID 处理
+    if components:
+        comp_names = []
+        for c in components:
+            comp_names.extend([item.strip() for item in c.split(",") if item.strip()])
+
+        if comp_names:
+            try:
+                proj_comps = client.get_project_components(project_key)
+            except JiraAPIError as e:
+                print_error(f"获取项目组件列表失败: {e}")
+                raise SystemExit(1)
+
+            name_to_comp = {comp["name"].strip(): comp for comp in proj_comps}
+            matched_comps = []
+            for name in comp_names:
+                if name in name_to_comp:
+                    matched_comps.append({"id": name_to_comp[name]["id"]})
+                else:
+                    available = ", ".join([f"'{k}'" for k in name_to_comp.keys()])
+                    print_error(f"组件 '{name}' 不存在！项目 {project_key} 可用组件有:\n{available}")
+                    raise SystemExit(1)
+            fields["components"] = matched_comps
 
     try:
         result = client.create_issue(fields)

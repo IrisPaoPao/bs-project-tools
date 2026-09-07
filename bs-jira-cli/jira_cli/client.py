@@ -206,6 +206,10 @@ class JiraClient:
             params["fields"] = fields
         return self._request("GET", f"/issue/{key}", params=params)
 
+    def get_project_components(self, project_key: str) -> list:
+        """获取项目的所有组件列表"""
+        return self._request("GET", f"/project/{project_key}/components") or []
+
     def create_issue(self, fields: dict) -> dict:
         """创建 Issue
 
@@ -277,17 +281,20 @@ class JiraClient:
         """获取所有 Issue 类型"""
         return self._request("GET", "/issuetype")
 
-    def get_create_meta(self, project_key: str) -> dict:
+    def get_create_meta(self, project_key: str, issue_type: str = None) -> dict:
         """获取创建 Issue 的元数据（可用字段和类型）
 
         Args:
             project_key: 项目 Key
+            issue_type: 可选，指定的 Issue 类型名称
         """
         params = {
             "projectKeys": project_key,
             "expand": "projects.issuetypes.fields",
         }
-        return self._request("GET", "/issue/createmeta", params=params)
+        if issue_type:
+            params["issuetypeNames"] = issue_type
+        return self._request("GET", "/issue/createmeta", params=params) or {}
 
     # ──────────────────────────────────────────────
     # 评论

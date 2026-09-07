@@ -442,3 +442,42 @@ def print_server_info(info: dict):
 
     content = "\n".join(lines)
     console.print(Panel(content, title="🔗 连接成功", border_style="green"))
+
+
+def print_create_meta(project_key: str, meta: dict, components: list, target_type: str = None):
+    """格式化打印创建元数据精简信息"""
+    console.print(f"\n[bold green]📋 项目 [{project_key}] 创建元数据摘要[/bold green]\n")
+
+    projects = meta.get("projects", [])
+    if not projects:
+        console.print(f"[yellow]未找到项目 {project_key} 的元数据。[/yellow]")
+        return
+
+    proj = projects[0]
+    issuetypes = proj.get("issuetypes", [])
+
+    # 1. Issue 类型及字段要求
+    console.print("[bold]1. 可用 Issue 类型及必填字段:[/bold]")
+    for it in issuetypes:
+        name = it.get("name")
+        if target_type and name != target_type:
+            continue
+        fields = it.get("fields", {})
+        required_fields = [
+            f"{f_info.get('name', f_key)} ({f_key})"
+            for f_key, f_info in fields.items()
+            if f_info.get("required")
+        ]
+        req_str = ", ".join(required_fields) if required_fields else "无特殊必填项"
+        console.print(f"  • [cyan]{name}[/cyan] (ID: {it.get('id')})")
+        console.print(f"    [dim]必填项: {req_str}[/dim]")
+
+    # 2. 可用组件列表
+    console.print("\n[bold]2. 可用组件列表 (Components):[/bold]")
+    if components:
+        comp_str = ", ".join([f"[cyan]{c.get('name')}[/cyan] (ID:{c.get('id')})" for c in components])
+        console.print(f"  {comp_str}")
+    else:
+        console.print("  [dim]该项目未配置组件[/dim]")
+    console.print("")
+
