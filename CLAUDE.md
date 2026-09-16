@@ -8,7 +8,7 @@
 
 ```
 bs-project-tools/
-├── bs-jdbc-tool/    # JDBC 数据库操作 MCP 服务 ✅ 已启用
+├── bs-jdbc-tool/    # 历史 JDBC 实现（数据库操作已迁至 usql）
 ├── bs-java-run/     # Java 服务运行管理（Shell 脚本 + Playwright）
 └── .mcp.json        # MCP 服务配置
 ```
@@ -59,116 +59,16 @@ cd bs-java-run && node bin/bs-java-run.js token --quiet
 
 ---
 
-## 🔧 可用工具（MCP）
+## 数据库操作 — usql
 
-### bs-jdbc-tool — JDBC 数据库操作
+数据库操作统一使用源 Skill `../zzq-agent-skills/bs-database-query/SKILL.md` 和上游 `usql`。业务 Skill 负责表关系和过滤范围；数据库 Skill 负责环境定位、连接及结果核对，支持查询与已授权的 DML/DDL。
 
-**当前配置状态**: ✅ 已配置、可直接调用
+- 未指定连接时，按运行环境 → Nacos 数据源 → usql 连接 → 当前库/schema → 表归属定位，不能按历史别名猜库。旧别名中的连字符迁为下划线，以实际映射为准。
+- 非交互查询使用 `usql -X -w -q -J -v ON_ERROR_STOP=1 '<已核对连接名>' -c 'SELECT ...'`；复杂单条查询使用 `-f`。行数限制写在目标方言 SQL 中。
+- 凭据使用本机 usql 原生私有配置，文件权限 0600；不输出账号、密码或完整连接串，连接清单只展示别名与驱动。
+- 单条 SELECT 的 `-J` 结果为行对象数组；同时检查退出码与输出，不能把失败当作空结果。大整数 ID 和精确金额在 SQL 中转为字符列。
+- 每次 CLI 调用是独立连接。多语句事务使用 `-1 -v ON_ERROR_STOP=1` 并通过标准输入传入脚本；0.21.4 的 `-1 -f` 已复现事务失效，禁止用于原子执行。事务范围还须核对目标数据库、表引擎、跨分片与 DDL 隐式提交行为。
+- 查询示例和排查不构成写入授权；已授权的建表、改表、索引及数据变更按实际方言执行并核对结果。
+- `bs-jdbc-tool/` 仅保留历史源码和原配置，不再作为默认数据库入口，也不继续新增功能。IRIS 使用 ODBC 版 usql、`libirisodbcuw35.so` 和命名 DSN，调用时设置 `ODBCINI="$HOME/.odbc.ini"`；namespace 使用 `SELECT $NAMESPACE` 核对。网络或驱动错误按实际证据报告，不自动回退或伪装类型。
 
-| 工具 | 功能 | 最佳实践 |
-|------|------|---------|
-| `list_databases` | 列出所有数据库别名 | **先调用它**，确认有哪些库可用 |
-| `describe_database` | 查看数据库配置详情 | 检查连接信息、驱动、参数 |
-| `jdbc_test_connection` | 测试数据库连接 | 操作前先确认连接正常 |
-| `jdbc_query` | 执行**单条** SQL | SELECT / INSERT / UPDATE / DELETE / DDL |
-| `jdbc_batch` | ✨ 执行**多条** SQL；abort 模式同一事务，continue 模式逐条尽力执行 | **多条 SQL 永远优先用这个，不要循环调用 `jdbc_query`** |
-
----
-
-## 🎯 工具选择决策树
-
-```
-要操作数据库吗？
-  │
-  ├─ 先确认别名 → 调用 list_databases
-  ├─ 先确认连接 → 调用 jdbc_test_connection
-  └─ 执行 SQL：
-      ├─ 1 条 → jdbc_query
-      └─ ≥2 条 → jdbc_batch
-           ├─ 需要原子性（失败全回滚）→ onError: "abort"（默认）
-           └─ 允许部分成功 → onError: "continue"
-```
-
----
-
-## ⚠️ Agent 安全守则
-
-1. **DML 默认开启**：`allowDml: true`，可以执行 INSERT/UPDATE/DELETE
-2. **批量限制**：`jdbc_batch` 单次最多 200 条（`maxBatchSize`）
-3. **单语句强制**：每条 SQL 只能是单语句（不允许多个 `;` 分隔）
-4. **密码保护**：永远不要输出 `config.local.json` 中的真实密码
-5. **批量优先**：凡是 N 条相关 SQL（导入、修复、迁移），**必须用 `jdbc_batch`**，不要逐条调用 `jdbc_query`
-
----
-
-## 🗄️ 预置数据库别名
-
-| 别名 | 类型 | 说明 |
-|------|------|------|
-| `dev-mysql` | MySQL | 运营平台开发库 |
-| `dev-oracle` | Oracle | 核心业务开发库 |
-
-密码已在本地配置中，无需询问。
-
----
-
-## ✅ 快速验证清单
-
-新会话开始时，如果要操作数据库，先跑这三步：
-
-1. `list_databases` → 确认别名
-2. `jdbc_test_connection` (alias: "dev-mysql") → 确认 MySQL 连接
-3. `jdbc_test_connection` (alias: "dev-oracle") → 确认 Oracle 连接
-
-三步都通过后再执行业务 SQL。
-
----
-
-## 📋 工具使用示例
-
-### jdbc_query（单条 SQL）
-
-```json
-{
-  "alias": "dev-mysql",
-  "sql": "SELECT * FROM auth_function WHERE code = ?",
-  "params": ["reconciliation:config"],
-  "timeoutSeconds": 10
-}
-```
-
-- SELECT：返回 `columns` + `rows` + `rowCount`
-- INSERT/UPDATE/DELETE：返回 `affectedRows`（影响行数）
-- params 是可选的，没有参数可以不传
-
----
-
-### jdbc_batch（多条 SQL + 事务）
-
-```json
-{
-  "alias": "dev-mysql",
-  "statements": [
-    { "sql": "INSERT INTO t (id, name) VALUES (?, ?)", "params": [1, "a"] },
-    { "sql": "UPDATE t SET name = ? WHERE id = ?", "params": ["b", 1] },
-    { "sql": "DELETE FROM t WHERE id = ?", "params": [2] }
-  ],
-  "onError": "abort"
-}
-```
-
-| onError 值 | 事务行为 | 适用场景 |
-|-----------|---------|---------|
-| `"abort"`（默认） | 任意一条失败 → 全部回滚 | 数据导入、批量变更、需要原子性的操作 |
-| `"continue"` | 逐条自动提交，失败记录，后续继续执行 | 数据修复、清理脚本，允许部分成功 |
-
-返回结构：
-- `total/succeeded/failed`：总数/成功数/失败数
-- `committed`：true/false（abort 模式下如果有失败就是 false）
-- `results`：每条的 `index/success/affectedRows/error` 详情
-
----
-
-## 📝 最后更新
-
-- 2026-06-17: 新增 `jdbc_batch` 批量事务工具，更新本能力说明
+项目内旧 JDBC MCP 注册已停用。全局客户端配置及已安装 Skills 由用户同步；移除旧 `bs-jdbc-query` 安装入口，安装 `bs-database-query` 及关联业务 Skills 后在新任务验证触发。

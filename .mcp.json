@@ -1,10 +1,3 @@
 {
-  "mcpServers": {
-    "bs-jdbc-tool": {
-      "command": "node",
-      "args": [
-        "./bs-jdbc-tool/src/server.js"
-      ]
-    }
-  }
+  "mcpServers": {}
 }

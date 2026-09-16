@@ -1,5 +1,7 @@
 # bs-jdbc-tool
 
+> 本工具已退出日常查询入口，不再维护新增查询能力。请使用 [bs-database-query](../../zzq-agent-skills/bs-database-query/SKILL.md) 与上游 usql；以下为历史实现说明，不能据此重新注册旧 MCP。原配置保留供迁移核对。
+
 ---
 
 ## 🤖 Agent 能力说明
