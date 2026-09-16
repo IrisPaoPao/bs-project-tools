@@ -43,7 +43,9 @@ bsq-jenkins -s tax-jenkins jobs
 ```
 
 ### 2. 触发构建
-默认情况下，触发构建后命令会阻塞并显示实时构建状态，直到构建结束（成功/失败）。
+默认情况下，触发构建后命令会阻塞并显示实时构建状态，直到构建结束或等待超时。队列与构建共享 `--timeout` 上限，默认 1800 秒；可用 `--timeout 3600` 调整。单次网络读取可能略有延迟。
+
+等待模式仅在最终状态为 `SUCCESS` 时返回 0；失败、取消、未知结果、丢失队列信息或超时返回非零退出码。超时不会取消服务端任务，应根据已输出的队列 URL / 构建号继续查询，不要直接重触发。
 
 **常规任务：**
 ```bash
@@ -63,7 +65,7 @@ bsq-jenkins build some-job -p env=prod -p version=1.0.0
 ```
 
 **触发后不等待（异步）：**
-如果你不想在终端干等结果，可以添加 `--no-wait`：
+只需提交请求时添加 `--no-wait`，返回 0 仅表示请求提交成功，不代表构建成功。多分支扫描不返回构建队列时也使用此模式：
 ```bash
 bsq-jenkins build <任务名称> --no-wait
 ```
@@ -78,3 +80,11 @@ bsq-jenkins status <任务名称>
 - `click` - 用于构建 CLI 框架
 - `requests` - 处理 HTTP 请求和 API 调用
 - `rich` - 华丽的终端 UI 输出
+
+## 本地回归验证
+
+```bash
+python -m unittest discover -s tests
+```
+
+测试使用模拟 API，不读取连接配置，不触发真实 Jenkins。

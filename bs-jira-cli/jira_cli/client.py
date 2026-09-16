@@ -6,7 +6,9 @@
 
 import os
 import re
+import tempfile
 import urllib.parse
+from pathlib import Path
 import requests
 
 
@@ -402,13 +404,13 @@ class JiraClient:
                 content_disposition = resp.headers.get("Content-Disposition", "")
                 if content_disposition:
                     # 例如: attachment; filename="测试.png"; filename*=UTF-8''%E6%B5%8B%E8%AF%95.png
-                    match = re.search(r"filename\*=UTF-8''(.+)", content_disposition)
+                    match = re.search(r"(?:^|;)\s*filename\*=UTF-8''([^;]+)", content_disposition, re.I)
                     if match:
-                        filename = urllib.parse.unquote(match.group(1))
+                        filename = urllib.parse.unquote(match.group(1).strip())
                     else:
-                        match = re.search(r'filename="([^"]+)"', content_disposition)
+                        match = re.search(r'(?:^|;)\s*filename=(?:"([^"]*)"|([^;]+))', content_disposition, re.I)
                         if match:
-                            filename = urllib.parse.unquote(match.group(1))
+                            filename = urllib.parse.unquote((match.group(1) or match.group(2) or '').strip())
                 
                 # 如果没拿到，从 URL 提取
                 if not filename:
@@ -416,16 +418,33 @@ class JiraClient:
                     filename = os.path.basename(parsed_url.path) or "attachment_download"
                     filename = urllib.parse.unquote(filename)
                 
-                os.makedirs(dest_dir, exist_ok=True)
-                dest_path = os.path.join(dest_dir, filename)
-                
-                # 写入文件
-                with open(dest_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            
-                return os.path.abspath(dest_path)
+                # 文件名来自远端响应，解码后再次校验，禁止其改变保存目录。
+                if (not filename or filename in ('.', '..') or
+                        any(c in filename for c in '/\\:') or
+                        any(ord(c) < 32 or ord(c) == 127 for c in filename)):
+                    raise ValueError('附件文件名包含非法路径或控制字符')
+                directory = Path(dest_dir).resolve()
+                directory.mkdir(parents=True, exist_ok=True)
+                destination = directory / filename
+                if destination.resolve().parent != directory:
+                    raise ValueError('附件保存路径超出目标目录')
+                if destination.exists() or destination.is_symlink():
+                    raise FileExistsError(f'附件已存在，请选择其他保存目录: {filename}')
+
+                # 完整下载后以硬链接发布文件；目标已存在时原子失败，避免覆盖并发下载。
+                fd, temporary_name = tempfile.mkstemp(prefix='.attachment-', dir=directory)
+                temporary = Path(temporary_name)
+                try:
+                    with os.fdopen(fd, 'wb') as stream:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk:
+                                stream.write(chunk)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.link(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                return str(destination)
                 
         except requests.RequestException as e:
             raise JiraAPIError(0, f"下载请求异常: {str(e)}", url)

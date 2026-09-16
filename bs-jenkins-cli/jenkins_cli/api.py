@@ -57,20 +57,20 @@ class JenkinsAPI:
         # Usually returns 201 Created and the queue item location in headers
         return response.headers.get('Location')
         
-    def get_queue_item(self, queue_url):
+    def get_queue_item(self, queue_url, timeout=10):
         """Get queue item info to find the executable (build) URL."""
         if not queue_url.endswith('/'):
             queue_url += '/'
         url = urljoin(queue_url, 'api/json')
-        response = self.session.get(url, timeout=10)
+        response = self.session.get(url, timeout=timeout)
         if response.status_code == 404:
             return None
         response.raise_for_status()
         return response.json()
 
-    def get_build_info(self, job_name, build_number):
+    def get_build_info(self, job_name, build_number, timeout=10):
         url = urljoin(self.url, f'job/{job_name}/{build_number}/api/json')
-        response = self.session.get(url, timeout=10)
+        response = self.session.get(url, timeout=timeout)
         if response.status_code == 404:
             return None
         response.raise_for_status()

@@ -112,3 +112,9 @@ bsq-jira comment delete PROJ-123 10523 # 删除指定评论（支持别名 rm / 
 - **Click** - 工业级 CLI 框架
 - **requests** - HTTP 客户端与会话管理
 - **rich** - 极致的终端排版与色彩美化
+
+## 附件保存与回归验证
+
+`bsq-jira attachment download '<附件URL>' --dest-dir '<目标目录>'` 支持中文文件名，拒绝越界路径与同名覆盖。下载完成前只写临时文件；中断会清理临时内容，不留下最终半成品。遇到同名文件时选择其他保存目录，工具不会删除旧文件。
+
+在本工具目录运行 `python -m unittest discover -s tests`，附件测试使用模拟响应，不登录 Jira 或访问网络。

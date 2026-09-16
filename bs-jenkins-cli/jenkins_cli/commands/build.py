@@ -2,100 +2,102 @@ import time
 import click
 from ..main import pass_context
 
+
 @click.command()
 @click.argument('job_name')
 @click.option('--wait/--no-wait', default=True, help='是否等待构建结束并返回结果 (默认等待)')
+@click.option('--timeout', type=click.IntRange(min=1), default=1800, show_default=True,
+              help='队列和构建的总等待上限（秒，不取消 Jenkins 任务）')
 @click.option('-p', '--param', multiple=True, help='构建参数，例如 -p branch=main -p env=prod')
 @pass_context
-def build_cmd(ctx, job_name, wait, param):
-    """触发任务构建"""
+def build_cmd(ctx, job_name, wait, timeout, param):
+    """触发任务构建；等待模式只有确认 SUCCESS 才返回成功。"""
     console = ctx.console
     api = ctx.api
-    
-    # 检查任务是否存在
+
+    # 参数不完整时不能退化成默认构建，避免触发错误环境或分支。
+    build_params = {}
+    for p in param:
+        if '=' not in p or not p.split('=', 1)[0].strip():
+            raise click.BadParameter('必须使用非空名称的 key=value 格式', param_hint='--param')
+        k, v = p.split('=', 1)
+        build_params[k] = v
+
     with console.status(f"[cyan]检查任务 {job_name}...[/cyan]"):
         try:
             job_info = api.get_job_info(job_name)
         except Exception as e:
-            console.print(f"[bold red]❌ 检查任务失败: {e}[/bold red]")
-            return
-            
+            raise click.ClickException(f'检查任务 {job_name} 失败: {e}') from e
         if not job_info:
-            console.print(f"[bold red]❌ 任务 '{job_name}' 不存在！[/bold red]")
-            return
+            raise click.ClickException(f"任务 '{job_name}' 不存在")
 
-    # 解析参数
-    build_params = {}
-    if param:
-        for p in param:
-            if '=' in p:
-                k, v = p.split('=', 1)
-                build_params[k] = v
-            else:
-                console.print(f"[yellow]⚠️ 忽略无效的参数格式 (缺少 '='): {p}[/yellow]")
-
-    # 触发构建
-    with console.status(f"[cyan]正在触发 {job_name} 构建...[/cyan]") as status:
+    with console.status(f"[cyan]正在触发 {job_name} 构建...[/cyan]"):
         try:
-            queue_url = api.build_job(job_name, parameters=build_params if build_params else None)
+            queue_url = api.build_job(job_name, parameters=build_params or None)
         except Exception as e:
-            console.print(f"[bold red]❌ 触发构建失败: {e}[/bold red]")
-            return
-            
-    console.print(f"[green]✅ 成功触发任务 '{job_name}'[/green]")
-    if not wait:
-        return
-        
+            raise click.ClickException(f'触发 {job_name} 未能确认成功，请先查询 Jenkins，勿直接重试: {e}') from e
+
+    console.print(f"[green]✅ 已提交任务 '{job_name}'[/green]")
     if queue_url:
         console.print(f"队列信息: [blue]{queue_url}[/blue]")
-    else:
-        console.print("[yellow]⚠️ 无法获取构建队列 URL，无法跟踪构建进度（若是扫描多分支流水线则属正常现象）。[/yellow]")
+    if not wait:
         return
-        
-    # 等待队列分配构建号
+    if not queue_url:
+        raise click.ClickException('未返回队列 URL，无法确认最终结果；扫描流水线可使用 --no-wait，勿重复提交构建')
+
+    # 队列和构建共用同一个截止时间，短暂查询失败可重试，绝不重新提交任务。
+    deadline = time.monotonic() + timeout
+    last_error = None
+    build_number = None
     build_url = None
-    with console.status("[cyan]等待 Jenkins 分配构建号...[/cyan]") as status:
-        while True:
+
+    def remaining():
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            detail = f'；最后一次查询错误: {last_error}' if last_error else ''
+            location = build_url or queue_url
+            raise click.ClickException(
+                f'等待超时 ({timeout} 秒)，任务 {job_name}，构建号 {build_number or "未分配"}，'
+                f'位置 {location}；Jenkins 任务未取消，请查询后续状态{detail}')
+        return seconds
+
+    with console.status('[cyan]等待 Jenkins 分配构建号...[/cyan]'):
+        while build_number is None:
+            budget = remaining()
             try:
-                queue_info = api.get_queue_item(queue_url)
-                if queue_info and 'executable' in queue_info and queue_info['executable']:
-                    build_url = queue_info['executable'].get('url')
-                    build_number = queue_info['executable'].get('number')
-                    break
-                elif queue_info and queue_info.get('cancelled'):
-                    console.print("[bold red]❌ 构建在队列中被取消！[/bold red]")
-                    return
+                queue_info = api.get_queue_item(queue_url, timeout=min(10, budget))
+                last_error = None
             except Exception as e:
-                console.print(f"[yellow]⚠️ 检查队列状态出错: {e}[/yellow]")
-            time.sleep(2)
-            
+                queue_info = None
+                last_error = str(e)
+            remaining()
+            if queue_info and queue_info.get('cancelled'):
+                raise click.ClickException(f'任务 {job_name} 在队列中被取消: {queue_url}')
+            executable = queue_info.get('executable') if queue_info else None
+            if executable and executable.get('number') is not None:
+                build_number = executable['number']
+                build_url = executable.get('url')
+                break
+            time.sleep(min(2, remaining()))
+
     console.print(f"[green]✅ 已分配构建号: #{build_number}[/green]")
-    console.print(f"构建地址: [blue]{build_url}[/blue]")
-    
-    # 等待构建结束
-    with console.status(f"[cyan]构建 #{build_number} 进行中...[/cyan]") as status:
+    if build_url:
+        console.print(f"构建地址: [blue]{build_url}[/blue]")
+    with console.status(f'[cyan]构建 #{build_number} 进行中...[/cyan]'):
         while True:
+            budget = remaining()
             try:
-                build_info = api.get_build_info(job_name, build_number)
-                if not build_info:
-                    time.sleep(2)
-                    continue
-                    
-                if not build_info.get('building'):
-                    # 构建结束
-                    result = build_info.get('result', 'UNKNOWN')
-                    break
-                    
-                # 还可以获取预估时间并在 status 中显示 (可选)
+                build_info = api.get_build_info(job_name, build_number, timeout=min(10, budget))
+                last_error = None
             except Exception as e:
-                pass
-            time.sleep(3)
-            
-    if result == 'SUCCESS':
-        console.print(f"[bold green]🎉 构建 #{build_number} 成功！[/bold green]")
-    elif result == 'FAILURE':
-        console.print(f"[bold red]💥 构建 #{build_number} 失败！[/bold red]")
-    elif result == 'ABORTED':
-        console.print(f"[bold grey50]🛑 构建 #{build_number} 被中止！[/bold grey50]")
-    else:
-        console.print(f"[bold yellow]⚠️ 构建 #{build_number} 结束，状态: {result}[/bold yellow]")
+                build_info = None
+                last_error = str(e)
+            remaining()
+            if build_info and build_info.get('building') is False:
+                result = build_info.get('result') or 'UNKNOWN'
+                break
+            time.sleep(min(3, remaining()))
+
+    if result != 'SUCCESS':
+        raise click.ClickException(f'任务 {job_name} 构建 #{build_number} 未成功，状态: {result}')
+    console.print(f'[bold green]🎉 构建 #{build_number} 成功！[/bold green]')

@@ -9,53 +9,26 @@
 ```
 bs-project-tools/
 ├── bs-jdbc-tool/    # 历史 JDBC 实现（数据库操作已迁至 usql）
-├── bs-java-run/     # Java 服务运行管理（Shell 脚本 + Playwright）
+├── bs-java-run/     # Java 服务运行管理（Node.js CLI + Playwright）
 └── .mcp.json        # MCP 服务配置
 ```
 
 ---
 
-## 🚀 bs-java-run — Java 服务运行管理
+## bs-java-run — Java 服务运行管理
 
-**不是 MCP 工具**，需通过 Bash 直接调用脚本。
+服务启动、停止、构建、状态及 Token 操作遵循 `../zzq-agent-skills/bs-project-run/SKILL.md`，使用 `bs-java-run` CLI 或目标工作区的 `./javarun`。
 
-### 可做的事情
-
-| 操作 | 脚本 | 说明 |
-|------|------|------|
-| 构建服务 | `bs-java-run/build_services.sh` | Maven 打包所有本地 Java 服务 |
-| 启动服务 | `bs-java-run/start_services.sh` | 启动所有本地 Java 服务（默认不构建） |
-| 停止服务 | `bs-java-run/stop_services.sh` | 停止所有本地 Java 服务 |
-| 重启服务 | `bs-java-run/restart_services.sh` | 重启所有本地 Java 服务（默认不构建） |
-| 查看状态 | `bs-java-run/status_services.sh` | 查看服务运行状态 |
-| 自动登录 | `bs-java-run/login.sh` | Playwright 模拟浏览器登录，获取 Token |
-
-### 本地服务列表
-
-| 服务名 | 路径 | 端口 |
-|--------|------|------|
-| `saas-data-gateway` | `../vasService/saas-data-gateway/` | 81 |
-| `saas-reconciliation-business` | `../vasService/saas-reconciliation-business/` | 82 |
-| `saas-ybld-rpa` | `../vasService/saas-ybld-rpa/` | 83 |
-
-### 登录使用方式
-
-支持多环境、多账户，配置在 `bs-java-run/JAVARUN.md`（共享）或 `JAVARUN.local.md`（本机私有）的「登录环境」+「登录账户」表。
+- 服务、端口、依赖、环境和账号以目标工作区 `.bs-java-run/JAVARUN.md` 与 `JAVARUN.local.md` 为准，不使用本文中的历史清单或猜测值。
+- `start` 默认只启动已有产物；需要构建时显式使用 `--build` 或 `up`。启动与重启须明确 `--env`。
+- 登录和 Token 经 `login` / `token` 获取；不输出凭据或 Token，不直接读取 Token 缓存。
+- 旧 `*_services.sh` 仅用于兼容，不作为 Agent 的推荐入口。配置缺失或目标环境不明确时，按 Skill 初始化/核对。
 
 ```bash
-# 有头模式，交互选择账户
-cd bs-java-run && ./login.sh
-
-# 无头模式 + 指定账户
-cd bs-java-run && ./login.sh --headless --account dev-001
-
-# 快速获取 token（用上次账户，免交互，每次重新登录不缓存）
-cd bs-java-run && node bin/bs-java-run.js token --quiet
+./javarun status
+./javarun up <service> --env <env> --yes
+./javarun restart <service> --env <env> --yes --build
 ```
-
-登录成功后会输出 JWT Token 并自动复制到剪贴板，`authorization` 请求头直接使用（无需加 Bearer 前缀）。
-
-> ⚠️ 登录接口参数经过前端加密，无法用 curl 明文调用，必须通过 Playwright 脚本。
 
 ---
 
