@@ -30,6 +30,10 @@ def build_cmd(ctx, job_name, wait, timeout, param):
             raise click.ClickException(f'检查任务 {job_name} 失败: {e}') from e
         if not job_info:
             raise click.ClickException(f"任务 '{job_name}' 不存在")
+        if job_info.get('_class') == 'org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject':
+            raise click.ClickException(
+                f"任务 '{job_name}' 是多分支流水线父任务，请使用 '{job_name}/job/<分支名>' 构建具体分支"
+            )
 
     with console.status(f"[cyan]正在触发 {job_name} 构建...[/cyan]"):
         try:

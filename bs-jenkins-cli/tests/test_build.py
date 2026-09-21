@@ -35,6 +35,18 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(0, self.invoke().exit_code)
         self.ctx.api.build_job.assert_called_once()
 
+    def test_multibranch_parent_requires_branch_job(self):
+        self.ctx.api.get_job_info.return_value = {
+            '_class': 'org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject',
+            'name': 'demo',
+        }
+
+        result = self.invoke()
+
+        self.assertNotEqual(0, result.exit_code)
+        self.assertIn('/job/<分支名>', result.output)
+        self.ctx.api.build_job.assert_not_called()
+
     def test_invalid_param_never_triggers_job(self):
         for param in ['invalid', '=value']:
             result = self.invoke('-p', param)

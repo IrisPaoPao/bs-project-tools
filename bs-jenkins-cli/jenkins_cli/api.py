@@ -43,19 +43,29 @@ class JenkinsAPI:
         """Trigger a build for a job. Returns queue item URL or None."""
         if parameters:
             url = urljoin(self.url, f'job/{job_name}/buildWithParameters')
-            response = self.session.post(url, data=parameters, timeout=10)
+            response = self.session.post(
+                url, data=parameters, timeout=10, allow_redirects=False)
         else:
             url = urljoin(self.url, f'job/{job_name}/build')
-            response = self.session.post(url, timeout=10)
+            response = self.session.post(url, timeout=10, allow_redirects=False)
             # Jenkins 多分支流水线的子任务等情况，如果报错 400 (Nothing is submitted / expects form submission)
             # 则退化为调用 buildWithParameters 并带上一个空延迟参数
             if response.status_code == 400:
                 url_fallback = urljoin(self.url, f'job/{job_name}/buildWithParameters')
-                response = self.session.post(url_fallback, data={'delay': '0sec'}, timeout=10)
+                response = self.session.post(
+                    url_fallback,
+                    data={'delay': '0sec'},
+                    timeout=10,
+                    allow_redirects=False,
+                )
         
         response.raise_for_status()
         # Usually returns 201 Created and the queue item location in headers
-        return response.headers.get('Location')
+        location = response.headers.get('Location')
+        if not location:
+            return None
+        # Jenkins 可能返回相对路径；统一转换为绝对地址，便于后续查询队列。
+        return urljoin(url, location)
         
     def get_queue_item(self, queue_url, timeout=10):
         """Get queue item info to find the executable (build) URL."""
