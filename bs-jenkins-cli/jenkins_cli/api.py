@@ -85,3 +85,22 @@ class JenkinsAPI:
             return None
         response.raise_for_status()
         return response.json()
+
+    def scan_job(self, job_name):
+        """Trigger a multibranch pipeline indexing scan. Returns queue item/indexing URL or None."""
+        url = urljoin(self.url, f'job/{job_name}/build')
+        response = self.session.post(url, timeout=10, allow_redirects=False)
+        response.raise_for_status()
+        location = response.headers.get('Location')
+        if not location:
+            return None
+        return urljoin(url, location)
+
+    def get_indexing_info(self, job_name, timeout=10):
+        """Get multibranch pipeline indexing status."""
+        url = urljoin(self.url, f'job/{job_name}/indexing/api/json')
+        response = self.session.get(url, timeout=timeout)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()

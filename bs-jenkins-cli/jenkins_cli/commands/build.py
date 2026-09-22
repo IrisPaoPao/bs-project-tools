@@ -32,7 +32,8 @@ def build_cmd(ctx, job_name, wait, timeout, param):
             raise click.ClickException(f"任务 '{job_name}' 不存在")
         if job_info.get('_class') == 'org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject':
             raise click.ClickException(
-                f"任务 '{job_name}' 是多分支流水线父任务，请使用 '{job_name}/job/<分支名>' 构建具体分支"
+                f"任务 '{job_name}' 是多分支流水线父任务，不能直接构建；"
+                f"构建具体分支请使用 '{job_name}/job/<分支名>'，若需重新索引分支请使用 'scan {job_name}'"
             )
 
     with console.status(f"[cyan]正在触发 {job_name} 构建...[/cyan]"):
@@ -47,7 +48,7 @@ def build_cmd(ctx, job_name, wait, timeout, param):
     if not wait:
         return
     if not queue_url:
-        raise click.ClickException('未返回队列 URL，无法确认最终结果；扫描流水线可使用 --no-wait，勿重复提交构建')
+        raise click.ClickException('未返回队列 URL，无法确认最终结果；多分支流水线扫描请使用 scan 命令，勿重复提交构建')
 
     # 队列和构建共用同一个截止时间，短暂查询失败可重试，绝不重新提交任务。
     deadline = time.monotonic() + timeout

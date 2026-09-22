@@ -29,11 +29,12 @@ def cli(ctx, server):
         exit(1)
 
 # Import commands here to register them with the CLI group
-from .commands import jobs, build, status
+from .commands import jobs, build, status, scan
 
 cli.add_command(jobs.jobs_cmd, name='jobs')
 cli.add_command(build.build_cmd, name='build')
 cli.add_command(status.status_cmd, name='status')
+cli.add_command(scan.scan_cmd, name='scan')
 
 if __name__ == '__main__':
     cli()

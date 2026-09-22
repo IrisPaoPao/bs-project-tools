@@ -51,6 +51,32 @@ class JenkinsApiBuildTests(unittest.TestCase):
 
         self.assertIsNone(self.api.build_job('demo'))
 
+    def test_scan_job_preserves_location(self):
+        self.api.session.post.return_value = self.response(
+            location='/queue/item/99/')
+
+        location_url = self.api.scan_job('demo-multi')
+
+        self.assertEqual('http://jenkins.example/queue/item/99/', location_url)
+        self.api.session.post.assert_called_once_with(
+            'http://jenkins.example/job/demo-multi/build',
+            timeout=10,
+            allow_redirects=False,
+        )
+
+    def test_get_indexing_info_returns_data(self):
+        resp = Mock()
+        resp.status_code = 200
+        resp.json.return_value = {'result': 'SUCCESS', 'building': False}
+        self.api.session.get.return_value = resp
+
+        info = self.api.get_indexing_info('demo-multi')
+        self.assertEqual({'result': 'SUCCESS', 'building': False}, info)
+        self.api.session.get.assert_called_once_with(
+            'http://jenkins.example/job/demo-multi/indexing/api/json',
+            timeout=10,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

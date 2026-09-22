@@ -65,12 +65,24 @@ bsq-jenkins build some-job -p env=prod -p version=1.0.0
 ```
 
 **触发后不等待（异步）：**
-只需提交请求时添加 `--no-wait`，返回 0 仅表示请求提交成功，不代表构建成功。多分支扫描不返回构建队列时也使用此模式：
+只需提交请求时添加 `--no-wait`，返回 0 仅表示请求提交成功，不代表构建成功：
 ```bash
 bsq-jenkins build <任务名称> --no-wait
 ```
 
-### 3. 查看最新构建状态
+### 3. 扫描多分支流水线 (`scan`)
+对于多分支流水线（Multibranch Pipeline），如果新创建的分支尚未被 Jenkins 扫描到，请使用 `scan` 命令触发服务端重新索引分支：
+
+```bash
+# 提交扫描（默认不等待，提交成功即返回 0）
+bsq-jenkins scan my-project
+
+# 等待扫描出队与索引完成
+bsq-jenkins scan my-project --wait --timeout 300
+```
+> **注意**：`scan` 命令仅用于触发分支索引，不等于触发代码构建。扫描完成后，请使用 `build <主任务名>/job/<分支名>` 来构建具体分支。
+
+### 4. 查看最新构建状态 (`status`)
 ```bash
 bsq-jenkins status <任务名称>
 ```
