@@ -19,6 +19,7 @@ import {
   smokeWorkspace,
   updateWorkspace,
 } from '../src/commands/workspace.js';
+import { createHistoryStore } from '../src/lib/history.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,6 +29,96 @@ const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'
 function collectJavaOpt(val, memo) {
   memo.push(val);
   return memo;
+}
+
+function historyWorkspace(directory) {
+  const configured = String(process.env.BS_JAVARUN_WORKSPACE || '').trim();
+  return configured || (directory ? String(directory) : undefined);
+}
+
+function historyEnvironment(options = {}) {
+  return options.env || options.profile || process.env.BS_ENV || process.env.BS_JAVARUN_PROFILE || undefined;
+}
+
+function historyServices(service) {
+  if (typeof service !== 'string' || !service.trim() || service === 'all') return [];
+  return [service.trim()];
+}
+
+function historyErrorCategory(error) {
+  const message = String(error?.message || '').toLowerCase();
+  if (message.includes('timeout') || message.includes('超时')) return 'timeout';
+  if (message.includes('config') || message.includes('配置') || message.includes('环境')) return 'configuration';
+  return 'unknown';
+}
+
+/** 顶层命令统一创建一次 run，命令实现只通过显式 options.runContext 写入阶段。 */
+async function runWithHistory(command, service, options, invoke, {
+  workspaceDir = historyWorkspace(),
+  phase = command,
+  deferPersistence = false,
+} = {}) {
+  // 预演只解析计划，不能创建工作区历史目录或写入 run 记录。
+  if (options?.dryRun) return invoke(undefined);
+  const store = createHistoryStore({ workspaceDir });
+  const runContext = store.beginRun({
+    command,
+    serviceNames: historyServices(service),
+    envAlias: historyEnvironment(options),
+    toolVersion: packageJson.version,
+  }, { deferPersistence });
+  let outcome = 'incomplete';
+  let finalErrorCategory;
+  try {
+    if (phase) runContext.setPhase(phase, { serviceName: service && service !== 'all' ? service : undefined });
+    const code = await invoke(runContext);
+    outcome = code === 0 ? 'success' : 'failed';
+    finalErrorCategory = code === 0 ? undefined : 'unknown';
+    return code;
+  } catch (error) {
+    outcome = 'failed';
+    finalErrorCategory = historyErrorCategory(error);
+    throw error;
+  } finally {
+    if (outcome === 'failed' && phase) {
+      runContext.setPhase(phase, { outcome: 'failed', errorCategory: finalErrorCategory || 'unknown' });
+    }
+    if (deferPersistence && outcome === 'success') runContext.activate();
+    runContext.finish({
+      outcome,
+      errorCategory: outcome === 'failed' ? finalErrorCategory || 'unknown' : undefined,
+      persistDeferred: deferPersistence,
+    });
+  }
+}
+
+function printHistoryResult(result, json) {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  if (result.queryError) console.error(`错误: ${result.queryError}`);
+  if (result.records.length === 0) {
+    console.log('没有符合条件的历史记录。');
+  } else {
+    for (const record of result.records) {
+      const services = record.serviceNames.length ? ` [${record.serviceNames.join(', ')}]` : '';
+      console.log(`${record.startedAt} ${record.command} ${record.outcome} ${record.runId}${services}`);
+    }
+  }
+  if (result.truncated) console.error('提示: 结果已按 limit 截断。');
+  if (result.storageWarning) console.error(`提示: ${result.storageWarning}`);
+}
+
+function readFeedbackStdin() {
+  if (process.stdin.isTTY) return Promise.reject(new Error('feedback 必须从 stdin 读取 JSON'));
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', chunk => chunks.push(chunk));
+    process.stdin.once('end', () => resolve(chunks.join('')));
+    process.stdin.once('error', reject);
+  });
 }
 
 program
@@ -76,9 +167,15 @@ program
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
   .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
+  .option('--dry-run', '只解析并展示启动计划，不启动服务', false)
+  .option('--json', '以 JSON 输出 dry-run 计划', false)
+  .option('--reuse-dependencies', '复用指纹匹配且已就绪的自动依赖服务', false)
   .option('-y, --yes', '非交互模式，默认选择全部', false)
   .action(async (service, options) => {
-    const code = await start(service, options);
+    const code = await runWithHistory('start', service, options, runContext => start(service, {
+      ...options,
+      runContext,
+    }), { phase: null });
     process.exit(code);
   });
 
@@ -88,7 +185,10 @@ program
   .description('构建 Java 服务')
   .option('-y, --yes', '非交互模式，默认构建全部', false)
   .action(async (service, options) => {
-    const code = await build(service, options);
+    const code = await runWithHistory('build', service, options, runContext => build(service, {
+      ...options,
+      runContext,
+    }), { phase: null });
     process.exit(code);
   });
 
@@ -102,9 +202,15 @@ program
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
   .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
+  .option('--dry-run', '只解析并展示启动计划，不构建或启动服务', false)
+  .option('--json', '以 JSON 输出 dry-run 计划', false)
+  .option('--reuse-dependencies', '复用指纹匹配且已就绪的自动依赖服务', false)
   .option('-y, --yes', '非交互模式，默认构建并启动全部', false)
   .action(async (service, options) => {
-    const code = await up(service, options);
+    const code = await runWithHistory('up', service, options, runContext => up(service, {
+      ...options,
+      runContext,
+    }), { phase: null });
     process.exit(code);
   });
 
@@ -117,9 +223,14 @@ program
   .option('-c, --cascade', '级联递归停止依赖该服务的反向运行服务', false)
   .option('-f, --force', '强杀非本工具 PID / 端口占用的残留进程', false)
   .option('-p, --skip-pid', '跳过 PID 文件，直接按端口清理', false)
+  .option('--dry-run', '只解析并展示停止计划，不停止服务', false)
+  .option('--json', '以 JSON 输出 dry-run 计划', false)
   .option('-y, --yes', '非交互模式，默认停止全部', false)
   .action(async (service, options) => {
-    const code = await stop(service, options);
+    const code = await runWithHistory('stop', service, options, runContext => stop(service, {
+      ...options,
+      runContext,
+    }), { phase: null });
     process.exit(code);
   });
 
@@ -137,9 +248,15 @@ program
   .option('-H, --nacos-host <host>', 'Nacos 主机地址')
   .option('-N, --nacos-ns <namespace>', 'Nacos 命名空间')
   .option('-T, --startup-timeout <seconds>', '服务启动等待超时时间（秒）')
+  .option('--dry-run', '只解析并展示重启计划，不停止或启动服务', false)
+  .option('--json', '以 JSON 输出 dry-run 计划', false)
+  .option('--reuse-dependencies', '复用指纹匹配且已就绪的自动依赖服务', false)
   .option('-y, --yes', '非交互模式，默认重启全部', false)
   .action(async (service, options) => {
-    const code = await restart(service, options);
+    const code = await runWithHistory('restart', service, options, runContext => restart(service, {
+      ...options,
+      runContext,
+    }), { phase: null });
     process.exit(code);
   });
 
@@ -147,6 +264,7 @@ program
 program
   .command('status [service]')
   .description('查看服务状态')
+  .option('--json', '以 JSON 输出服务状态', false)
   .action(async (service, options) => {
     const code = status(service, options);
     process.exit(code);
@@ -164,7 +282,10 @@ program
   .option('-q, --quiet', '只输出 token 字符串', false)
   .option('--no-clipboard', '不自动复制 token 到剪贴板')
   .action(async (options) => {
-    const code = await loginCommand(options);
+    const code = await runWithHistory('login', undefined, options, runContext => loginCommand({
+      ...options,
+      runContext,
+    }), { phase: 'login' });
     process.exit(code);
   });
 
@@ -179,8 +300,63 @@ program
   .option('--no-clipboard', '不自动复制 token 到剪贴板')
   .option('--no-headless', '显示浏览器窗口（默认无头）')
   .action(async (options) => {
-    const code = await tokenCommand(options);
+    const code = await runWithHistory('token', undefined, options, runContext => tokenCommand({
+      ...options,
+      runContext,
+    }), { phase: 'token' });
     process.exit(code);
+  });
+
+// history 命令只读本地运行记录，不创建新的 run。
+program
+  .command('history')
+  .description('查看本地 JavaRun 历史记录')
+  .option('-n, --limit <count>', '最多返回记录数，默认 20', value => Number(value), 20)
+  .option('--service <name>', '按服务名筛选')
+  .option('-f, --failed', '只显示失败记录', false)
+  .option('--run-id <uuid>', '按 runId 筛选')
+  .option('--runId <uuid>', '按 runId 筛选')
+  .option('--json', '以 JSON 输出', false)
+  .option('-w, --workspace <directory>', '使用目标聚合目录下的 .bs-java-run 配置')
+  .action(options => {
+    const result = createHistoryStore({ workspaceDir: historyWorkspace() }).list({
+      limit: options.limit,
+      service: options.service,
+      failed: options.failed,
+      runId: options.runId,
+    });
+    printHistoryResult(result, options.json);
+    process.exit(result.queryError ? 2 : 0);
+  });
+
+// feedback 命令从 stdin 接收固定结构 JSON，避免把凭据作为命令行参数留在进程列表中。
+program
+  .command('feedback [runId]')
+  .description('为指定历史 run 追加结构化反馈（JSON 从 stdin 读取）')
+  .option('--run-id <uuid>', '按 runId 指定记录')
+  .option('--runId <uuid>', '按 runId 指定记录')
+  .option('--json', '以 JSON 输出', false)
+  .option('-w, --workspace <directory>', '使用目标聚合目录下的 .bs-java-run 配置')
+  .action(async (runId, options) => {
+    const requestedRunId = runId || options.runId;
+    if (!requestedRunId) {
+      console.error('错误: feedback 需要 runId 参数');
+      process.exit(2);
+      return;
+    }
+    try {
+      const input = await readFeedbackStdin();
+      const result = createHistoryStore({ workspaceDir: historyWorkspace() }).addFeedback(requestedRunId, input);
+      const output = { runId: requestedRunId, ...result };
+      if (options.json) process.stdout.write(`${JSON.stringify(output)}\n`);
+      else if (result.saved) console.log(`反馈已写入: ${requestedRunId}`);
+      else console.error(`提示: ${result.storageWarning || '反馈未写入磁盘。'}`);
+      process.exit(result.saved ? 0 : 1);
+    } catch (error) {
+      if (options.json) process.stdout.write(`${JSON.stringify({ runId: requestedRunId, saved: false, error: error.message })}\n`);
+      else console.error(`错误: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 // 聚合目录启动组件管理命令。
@@ -191,7 +367,13 @@ workspace
   .description('生成目标目录的 javarun 转发脚本和 .bs-java-run 配置')
   .action(async directory => {
     try {
-      process.exit(await initWorkspace(directory));
+      process.exit(await runWithHistory('workspace-init', undefined, {}, runContext => initWorkspace(directory, {
+        runContext,
+      }), {
+        workspaceDir: directory,
+        phase: 'workspace-init',
+        deferPersistence: true,
+      }));
     } catch (error) {
       console.error(`错误: ${error.message}`);
       process.exit(1);
@@ -208,9 +390,12 @@ workspace
       if (options.replaceAll && !options.configure) {
         throw new Error('--replace-all 只能与 --configure 一起使用');
       }
-      process.exit(await (options.configure
-        ? reconfigureWorkspace(directory, { replaceAll: options.replaceAll })
-        : updateWorkspace(directory)));
+      process.exit(await runWithHistory('workspace-update', undefined, options, runContext => (options.configure
+        ? reconfigureWorkspace(directory, { replaceAll: options.replaceAll, runContext })
+        : updateWorkspace(directory, { runContext })), {
+        workspaceDir: directory,
+        phase: 'workspace-update',
+      }));
     } catch (error) {
       console.error(`错误: ${error.message}`);
       process.exit(1);
@@ -241,7 +426,13 @@ workspace
     try {
       process.env.BS_JAVARUN_WORKSPACE = directory;
       delete globalThis._bsJavaRunConfig;
-      process.exit(await smokeWorkspace(directory, service, options));
+      process.exit(await runWithHistory('smoke', service, options, runContext => smokeWorkspace(directory, service, {
+        ...options,
+        runContext,
+      }), {
+        workspaceDir: directory,
+        phase: null,
+      }));
     } catch (error) {
       console.error(`错误: ${error.message}`);
       process.exit(1);

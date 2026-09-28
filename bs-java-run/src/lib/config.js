@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { parseMultiColumnTable, readMarkdownSection } = require('./markdown-config-parser.cjs');
 
 const SCRIPT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const JAVARUN_MD = path.resolve(SCRIPT_DIR, '..', '..', 'JAVARUN.md');
@@ -32,17 +36,14 @@ const ENV_MANAGED_JVM_KEYS = new Set([
 
 function expandPath(p) {
   if (!p) return '';
-  if (p.startsWith('~')) {
-    return path.join(os.homedir(), p.slice(1));
-  }
-  if (p.startsWith('$HOME')) {
-    return path.join(os.homedir(), p.slice(5));
-  }
+  if (p === '~' || p === '$HOME') return os.homedir();
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  if (p.startsWith('$HOME/')) return path.join(os.homedir(), p.slice(6));
   return p;
 }
 
-function stripMarkdownValue(value) {
-  return String(value || '').trim().replace(/^`|`$/g, '');
+function isConfiguredHomePath(value) {
+  return value.startsWith('/') || value === '~' || value.startsWith('~/') || value === '$HOME' || value.startsWith('$HOME/');
 }
 
 function readConfigFile(filePath, required = true) {
@@ -66,45 +67,6 @@ export function resolveStartupTimeoutSeconds(value, fallback = DEFAULT_STARTUP_T
     throw new Error(`启动等待超时时间必须是正整数秒: ${value}`);
   }
   return parsed;
-}
-
-/**
- * 按 Markdown 二级标题 + 首列单元格精确解析 GFM 表格
- */
-function parseMultiColumnTable(content, sectionHeading, headerFirstCell) {
-  const rows = [];
-  const lines = String(content || '').split(/\r?\n/);
-  let inSection = !sectionHeading;
-  let inTable = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (sectionHeading && trimmed.startsWith('## ')) {
-      if (trimmed.toLowerCase().includes(sectionHeading.toLowerCase())) {
-        inSection = true;
-        inTable = false;
-        continue;
-      } else if (inSection) {
-        // 遇到下一个二级标题，结束当前 Section 的查找
-        break;
-      }
-    }
-
-    if (!inSection) continue;
-
-    if (!trimmed.startsWith('|')) {
-      inTable = false;
-      continue;
-    }
-    const cells = trimmed.split('|').slice(1, -1).map(stripMarkdownValue);
-    if (!inTable) {
-      if (cells[0] === headerFirstCell) inTable = true;
-      continue;
-    }
-    if (/^[\s-]+$/.test(cells.join(''))) continue;
-    rows.push(cells);
-  }
-  return rows;
 }
 
 /**
@@ -275,7 +237,7 @@ function parseLoginAccounts(content) {
 }
 
 function parseServices(content) {
-  return parseMultiColumnTable(content, '服务定义', '服务名')
+  return parseMultiColumnTable(content, '服务定义', '服务名', { allowExtraColumns: true })
     .map(cells => {
       const name = cells[0];
       const rawPath = cells[1];
@@ -465,14 +427,33 @@ function validateEnvironmentConfiguration(environments, accounts, services, envi
   }
 }
 
-function findJavaHome(content) {
-  for (const line of String(content || '').split(/\r?\n/)) {
-    const candidate = line.trim();
-    if (candidate.startsWith('/') && candidate.includes('Java')) {
-      return candidate;
-    }
+function findJavaHome(content, sourceName) {
+  const section = readMarkdownSection(content, 'java 环境地址');
+  if (section === null) return '';
+  const candidates = section.split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !/^(`{3,}|~{3,})/.test(line) && !line.startsWith('<!--') && !line.startsWith('-->'))
+    .map(line => line.replace(/^`|`$/g, '').trim())
+    .filter(line => !['<请填写 JDK 根目录>', '<java-home-path>'].includes(line));
+  if (candidates.length > 1) {
+    throw new Error(`${sourceName} 的 ## java 环境地址 只能配置一个 JDK 根目录`);
   }
-  return '';
+  const candidate = candidates[0] || '';
+  if (candidate && !isConfiguredHomePath(candidate)) {
+    throw new Error(`${sourceName} 的 JDK 根目录必须是绝对路径、~ 路径或 $HOME 路径: ${candidate}`);
+  }
+  return candidate;
+}
+
+function resolveJavaHome(env, localContent, content) {
+  const override = String(env.BS_JAVA_HOME || '').trim();
+  if (override) {
+    if (!isConfiguredHomePath(override)) {
+      throw new Error(`BS_JAVA_HOME 必须是绝对路径、~ 路径或 $HOME 路径: ${override}`);
+    }
+    return expandPath(override);
+  }
+  return expandPath(findJavaHome(localContent, 'JAVARUN.local.md') || findJavaHome(content, 'JAVARUN.md'));
 }
 
 export function loadConfig(env = process.env, options = {}) {
@@ -532,7 +513,7 @@ export function loadConfig(env = process.env, options = {}) {
     throw new Error(`未知环境: ${selectedEnvName}${available ? `，可用环境: ${available}` : ''}`);
   }
 
-  const javaHome = env.BS_JAVA_HOME || findJavaHome(localContent) || findJavaHome(content);
+  const javaHome = resolveJavaHome(env, localContent, content);
 
   const cliJavaOpts = Array.isArray(options.javaOpt)
     ? options.javaOpt
@@ -547,7 +528,7 @@ export function loadConfig(env = process.env, options = {}) {
     environmentServices,
     activeEnvName: selectedEnvName,
     activeEnv: activeEnvObj,
-    javaHome: expandPath(javaHome),
+    javaHome,
     jvmOptionGroups,
     osJavaOpts,
     cliJavaOpts,

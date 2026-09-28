@@ -4,10 +4,12 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'node:readline/promises';
+import { parseAllDocuments } from 'yaml';
 
 import { loadConfig, resolveConfigDirectory } from '../lib/config.js';
 import { checkPort, findServerModule, resolveWar } from '../lib/process-manager.js';
 import { selectServices } from '../lib/service-selector.js';
+import { error } from '../lib/logger.js';
 import { start } from './start.js';
 import { stop } from './stop.js';
 
@@ -32,7 +34,7 @@ function workspacePaths(directory) {
 }
 
 function escapeCell(value) {
-  return String(value ?? '').replace(/\|/g, '\\|').trim();
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim();
 }
 
 function table(headers, rows) {
@@ -43,11 +45,8 @@ function table(headers, rows) {
   ].join('\n');
 }
 
-/** 生成时只能读取工具自身配置，不能被目标工作区的环境变量反向污染。 */
-function sourceConfig() {
-  const env = { ...process.env };
-  delete env.BS_JAVARUN_WORKSPACE;
-  return loadConfig(env);
+function isConfiguredHomePath(value) {
+  return value.startsWith('/') || value === '~' || value.startsWith('~/') || value === '$HOME' || value.startsWith('$HOME/');
 }
 
 /** 读取必填交互项，避免生成一个无法连接 Nacos 或登录的空环境。 */
@@ -124,8 +123,12 @@ function validateSetup(setup) {
     if (accountNames.has(account.name)) throw new Error(`可用用户别名重复: ${account.name}`);
     accountNames.add(account.name);
   }
+  const javaHome = String(setup.javaHome || '').trim();
+  if (javaHome && !isConfiguredHomePath(javaHome)) {
+    throw new Error(`JDK 根目录必须是绝对路径、~ 路径或 $HOME 路径: ${javaHome}`);
+  }
   return {
-    javaHome: String(setup.javaHome || '').trim(),
+    javaHome,
     environments: environments.map(environment => ({ ...environment })),
     accounts: accounts.map(account => ({ ...account })),
   };
@@ -278,27 +281,69 @@ function findProjectCandidates(root) {
 
 function readDeclaredPort(projectRoot) {
   const candidates = [];
+  const serverModule = findServerModule(projectRoot, path.basename(projectRoot));
+  if (!serverModule) return null;
+  const resourcesRoot = path.join(projectRoot, serverModule, 'src', 'main', 'resources');
+  if (!fs.existsSync(resourcesRoot)) return null;
   const visit = current => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       if (entry.name === 'target' || entry.name === '.git') continue;
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
         visit(full);
-      } else if (/^application[^/]*\.(yml|yaml|properties)$/.test(entry.name)) {
+      } else if (/^(?:application|bootstrap)[^/]*\.(yml|yaml|properties)$/i.test(entry.name)) {
         candidates.push(full);
       }
     }
   };
-  visit(projectRoot);
-
+  visit(resourcesRoot);
+  candidates.sort();
+  const declared = [];
   for (const file of candidates) {
     const content = fs.readFileSync(file, 'utf8');
-    const property = content.match(/^\s*server\.port\s*[=:]\s*(\d+)\s*$/m);
-    const yaml = content.match(/^\s*port\s*:\s*(\d+)\s*(?:#.*)?$/m);
-    const match = property || yaml;
-    if (match) return { port: Number(match[1]), source: `配置文件:${path.relative(projectRoot, file)}` };
+    const source = `配置文件:${path.relative(projectRoot, file)}`;
+    if (/\.properties$/i.test(file)) {
+      for (const line of content.split(/\r?\n/)) {
+        if (/^\s*[#!]/.test(line)) continue;
+        const match = line.match(/^\s*server\.port\s*[=:]\s*(.*?)\s*$/);
+        if (match) declared.push({ value: match[1].replace(/\s+[#!].*$/, '').trim().replace(/^['"]|['"]$/g, ''), source });
+      }
+      continue;
+    }
+    const documents = parseAllDocuments(content, { prettyErrors: false });
+    const parseError = documents.flatMap(document => document.errors)[0];
+    if (parseError) {
+      const line = parseError.linePos?.[0]?.line;
+      throw new Error(`服务 ${path.basename(projectRoot)} 的 YAML 配置无效: ${path.relative(projectRoot, file)}${line ? ` 第 ${line} 行` : ''}`);
+    }
+    for (const document of documents) {
+      const config = document.toJS();
+      if (!config || typeof config !== 'object' || Array.isArray(config)) continue;
+      const server = config.server;
+      if (server && typeof server === 'object' && Object.hasOwn(server, 'port')) {
+        declared.push({ value: server.port, source });
+      }
+      if (Object.hasOwn(config, 'server.port')) {
+        declared.push({ value: config['server.port'], source });
+      }
+    }
   }
-  return null;
+  if (declared.length === 0) return null;
+  for (const item of declared) {
+    const port = typeof item.value === 'number'
+      ? item.value
+      : /^\d+$/.test(String(item.value ?? '').trim()) ? Number(item.value) : NaN;
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new Error(`服务 ${path.basename(projectRoot)} 的 server.port 无效: ${item.source}`);
+    }
+    item.port = port;
+  }
+  const ports = [...new Set(declared.map(item => item.port))];
+  if (ports.length > 1) {
+    const details = declared.map(item => `${item.port} (${item.source})`).join('、');
+    throw new Error(`服务 ${path.basename(projectRoot)} 的 server.port 配置存在冲突: ${details}`);
+  }
+  return { port: ports[0], source: [...new Set(declared.map(item => item.source))].join('、') };
 }
 
 function inferDependencies(projectRoot, services) {
@@ -321,19 +366,34 @@ function nextFreePort(usedPorts) {
  */
 function discoverWorkspace(root, existingConfig) {
   const projectRoots = findProjectCandidates(root);
+  if (!Array.isArray(existingConfig?.services)) {
+    throw new Error('工作区配置无效：服务定义必须是数组');
+  }
   const existingByPath = new Map(
     existingConfig.services
       .filter(service => service.path && isWithin(root, service.path))
       .map(service => [path.resolve(service.path), service]),
   );
   const usedPorts = new Set(existingConfig.services.map(service => service.port).filter(Number.isInteger));
+  const plans = projectRoots.map(projectRoot => {
+    const configured = existingByPath.get(path.resolve(projectRoot));
+    const name = configured?.name || path.basename(projectRoot);
+    const portInfo = Number.isInteger(configured?.port)
+      ? { port: configured.port, source: '现有 bs-java-run 配置' }
+      : readDeclaredPort(projectRoot);
+    return { projectRoot, configured, name, portInfo };
+  });
+  for (const plan of plans) {
+    if (!plan.portInfo || Number.isInteger(plan.configured?.port)) continue;
+    if (usedPorts.has(plan.portInfo.port)) {
+      throw new Error(`服务 ${plan.name} 推断出的端口 ${plan.portInfo.port} 已被其它服务占用`);
+    }
+    usedPorts.add(plan.portInfo.port);
+  }
   const services = [];
   const sources = {};
 
-  for (const projectRoot of projectRoots) {
-    const configured = existingByPath.get(path.resolve(projectRoot));
-    const name = configured?.name || path.basename(projectRoot);
-    const portInfo = configured ? { port: configured.port, source: '现有 bs-java-run 配置' } : readDeclaredPort(projectRoot);
+  for (const { projectRoot, configured, name, portInfo } of plans) {
     const port = portInfo?.port || nextFreePort(usedPorts);
     const source = portInfo?.source || '自动分配:18080+';
     const service = {
@@ -364,6 +424,10 @@ function discoverWorkspace(root, existingConfig) {
 }
 
 function selectWorkspaceEnvironmentData(config, services) {
+  for (const key of ['environmentServices', 'environments']) {
+    if (!Array.isArray(config?.[key])) throw new Error(`工作区配置无效：${key} 必须是数组`);
+  }
+  if (!(config.jvmOptionGroups instanceof Map)) throw new Error('工作区配置无效：JVM 参数组必须是映射表');
   const names = new Set(services.map(service => service.name));
   const envServiceRows = config.environmentServices.filter(row => names.has(row.serviceName));
   // 每个运行环境都必须在共享配置中保留，即使刚新增、尚未设置专属 JVM 参数。
@@ -454,6 +518,7 @@ function createRuntimeConfig(setup) {
     javaHome: setup.javaHome,
     environments: setup.environments,
     accounts: setup.accounts,
+    services: [],
     environmentServices: [],
     jvmOptionGroups: new Map(),
   };
@@ -563,14 +628,33 @@ function renderManifest(output) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+function workspaceGitignoreContent(paths) {
+  const ignoreFile = path.join(paths.configDir, '.gitignore');
+  const existing = fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, 'utf8') : '';
+  const required = [
+    `/${LOCAL_CONFIG_NAME}`,
+    `/${LOCAL_CONFIG_NAME}.bak-*`,
+    `/.${LOCAL_CONFIG_NAME}.*.tmp`,
+    `/${LOCAL_CONFIG_NAME}.*.tmp`,
+    `/${LOCAL_CONFIG_NAME}.*.rollback`,
+    '/history/',
+    'logs/',
+    '*.pid',
+  ];
+  const existingRules = new Set(existing.split(/\r?\n/).map(line => line.trim()));
+  const missing = required.filter(rule => !existingRules.has(rule));
+  const prefix = existing.endsWith('\n') || !existing ? existing : `${existing}\n`;
+  return `${prefix}${missing.length ? `${missing.join('\n')}\n` : ''}`;
+}
+
 function generatedFileEntries(output, { writeLocal }) {
   const { paths } = output;
   const entries = [
     { file: paths.configFile, content: output.managedConfig },
-    { file: path.join(paths.configDir, '.gitignore'), content: `${LOCAL_CONFIG_NAME}\nlogs/\n*.pid\n` },
+    { file: path.join(paths.configDir, '.gitignore'), content: workspaceGitignoreContent(paths) },
     { file: paths.wrapperFile, content: renderWrapper(), mode: 0o755 },
   ];
-  if (writeLocal) entries.push({ file: paths.localFile, content: output.localTemplate });
+  if (writeLocal) entries.push({ file: paths.localFile, content: output.localTemplate, mode: 0o600 });
   entries.push({ file: paths.manifestFile, content: renderManifest(output) });
   return entries;
 }
@@ -579,10 +663,8 @@ function writeGeneratedFiles(output, { writeLocal }) {
   const { paths } = output;
   fs.mkdirSync(paths.configDir, { recursive: true });
   fs.mkdirSync(path.join(paths.configDir, 'logs'), { recursive: true });
-  for (const entry of generatedFileEntries(output, { writeLocal })) {
-    fs.writeFileSync(entry.file, entry.content, { encoding: 'utf8', mode: entry.mode });
-    if (entry.mode) fs.chmodSync(entry.file, entry.mode);
-  }
+  writeFilesAtomically(generatedFileEntries(output, { writeLocal }));
+  tightenPrivatePermissions(paths.configDir);
 }
 
 function nextBackupFile(file, timestamp) {
@@ -596,17 +678,80 @@ function nextBackupFile(file, timestamp) {
 /** 每次配置前都创建共享与私有配置的同时间戳备份，私有文件缺失时保留空白备份以便审计。 */
 function backupConfigurationFiles(paths, managedContent, localContent) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  fs.writeFileSync(nextBackupFile(paths.configFile, timestamp), managedContent, 'utf8');
-  fs.writeFileSync(nextBackupFile(paths.localFile, timestamp), localContent, 'utf8');
+  writePrivateFile(nextBackupFile(paths.configFile, timestamp), managedContent);
+  writePrivateFile(nextBackupFile(paths.localFile, timestamp), localContent);
 }
 
 function stageAtomicFiles(entries) {
-  return entries.map((entry, index) => {
-    const tempFile = path.join(path.dirname(entry.file), `.${path.basename(entry.file)}.${process.pid}.${Date.now()}.${index}.tmp`);
-    fs.writeFileSync(tempFile, entry.content, { encoding: 'utf8', mode: entry.mode });
-    if (entry.mode) fs.chmodSync(tempFile, entry.mode);
-    return { ...entry, tempFile };
-  });
+  const staged = [];
+  try {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      const nonce = crypto.randomBytes(6).toString('hex');
+      const tempFile = path.join(path.dirname(entry.file), `.${path.basename(entry.file)}.${process.pid}.${nonce}.${index}.tmp`);
+      const stagedEntry = { ...entry, tempFile };
+      staged.push(stagedEntry);
+      fs.writeFileSync(tempFile, entry.content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fs.chmodSync(tempFile, 0o600);
+    }
+  } catch (error) {
+    const cleanupFailures = [];
+    for (const entry of staged) {
+      try {
+        if (fs.existsSync(entry.tempFile)) fs.unlinkSync(entry.tempFile);
+      } catch (cleanupError) {
+        cleanupFailures.push(`${entry.tempFile}: ${cleanupError.message}`);
+      }
+    }
+    if (cleanupFailures.length) {
+      throw new Error(`${error.message}；临时文件清理失败 (${cleanupFailures.join('；')})`);
+    }
+    throw error;
+  }
+  return staged;
+}
+
+function writePrivateFile(file, content) {
+  const descriptor = fs.openSync(file, 'wx', 0o600);
+  try {
+    fs.writeFileSync(descriptor, content, 'utf8');
+    fs.fchmodSync(descriptor, 0o600);
+  } catch (error) {
+    fs.closeSync(descriptor);
+    fs.rmSync(file, { force: true });
+    throw error;
+  }
+  fs.closeSync(descriptor);
+}
+
+function finalFileMode(entry, original) {
+  if (entry.mode !== undefined) return entry.mode;
+  return original?.exists ? original.mode & 0o7777 : 0o644;
+}
+
+function tightenHistoryPermissions(directory) {
+  fs.chmodSync(directory, 0o700);
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isFile()) fs.chmodSync(file, 0o600);
+    else if (entry.isDirectory()) tightenHistoryPermissions(file);
+  }
+}
+
+function tightenPrivatePermissions(directory) {
+  if (!fs.existsSync(directory)) return;
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isFile() && (
+      entry.name === LOCAL_CONFIG_NAME
+      || entry.name.startsWith(`${LOCAL_CONFIG_NAME}.bak-`)
+      || entry.name.startsWith(`.${LOCAL_CONFIG_NAME}.`)
+    )) {
+      fs.chmodSync(file, 0o600);
+    } else if (entry.name === 'history' && entry.isDirectory()) {
+      tightenHistoryPermissions(file);
+    }
+  }
 }
 
 /**
@@ -615,37 +760,56 @@ function stageAtomicFiles(entries) {
  */
 function writeFilesAtomically(entries) {
   const originals = new Map(entries.map(entry => [entry.file, fs.existsSync(entry.file)
-    ? { exists: true, content: fs.readFileSync(entry.file, 'utf8'), mode: fs.statSync(entry.file).mode }
+    ? { exists: true, content: fs.readFileSync(entry.file, 'utf8'), mode: fs.statSync(entry.file).mode & 0o7777 }
     : { exists: false }]));
   let staged = [];
   const replaced = [];
+  const rollbackFailures = [];
+  const rollbackArtifacts = [];
+  let writeError = null;
+  let cleanupFailures = [];
   try {
     staged = stageAtomicFiles(entries);
     for (const entry of staged) {
       fs.renameSync(entry.tempFile, entry.file);
       replaced.push(entry.file);
+      fs.chmodSync(entry.file, finalFileMode(entry, originals.get(entry.file)));
     }
   } catch (error) {
     for (const file of replaced.reverse()) {
       const original = originals.get(file);
+      let rollback = null;
       try {
         if (original.exists) {
-          const rollback = `${file}.${process.pid}.${Date.now()}.rollback`;
-          fs.writeFileSync(rollback, original.content, { encoding: 'utf8', mode: original.mode });
+          rollback = `${file}.${process.pid}.${Date.now()}.rollback`;
+          fs.writeFileSync(rollback, original.content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          fs.chmodSync(rollback, 0o600);
           fs.renameSync(rollback, file);
+          fs.chmodSync(file, finalFileMode(entries.find(entry => entry.file === file), original));
         } else if (fs.existsSync(file)) {
           fs.unlinkSync(file);
         }
-      } catch {
-        // 保留原始写入错误；极端文件系统异常下由备份文件协助人工恢复。
+      } catch (rollbackError) {
+        rollbackFailures.push(`${file}: ${rollbackError.message}`);
+        if (rollback && fs.existsSync(rollback)) rollbackArtifacts.push(rollback);
       }
     }
-    throw new Error(`配置写入失败，原文件已回滚: ${error.message}`);
+    writeError = error;
   } finally {
     for (const entry of staged) {
-      if (fs.existsSync(entry.tempFile)) fs.unlinkSync(entry.tempFile);
+      try {
+        if (fs.existsSync(entry.tempFile)) fs.unlinkSync(entry.tempFile);
+      } catch (error) {
+        cleanupFailures.push(`${entry.tempFile}: ${error.message}`);
+      }
     }
   }
+  if (!writeError) return;
+  const details = rollbackFailures.length
+    ? `回滚未完全成功 (${rollbackFailures.join('；')})${rollbackArtifacts.length ? `；保留恢复文件: ${rollbackArtifacts.join('、')}` : ''}`
+    : replaced.length ? '原文件已回滚' : '原文件未发生变化';
+  const cleanup = cleanupFailures.length ? `；临时文件清理失败 (${cleanupFailures.join('；')})` : '';
+  throw new Error(`配置写入失败，${details}: ${writeError.message}${cleanup}`);
 }
 
 /** 首次初始化只创建新工作区，防止意外覆盖已有聚合目录配置。 */
@@ -654,9 +818,8 @@ export async function initWorkspace(directory, options = {}) {
   if (fs.existsSync(paths.configFile) || fs.existsSync(paths.wrapperFile)) {
     throw new Error(`工作区已初始化: ${paths.root}；如需刷新请执行 workspace update`);
   }
-  const source = sourceConfig();
-  const setup = options.setup ? validateSetup(options.setup) : await promptWorkspaceSetup(source.javaHome);
-  const output = buildOutput(directory, createRuntimeConfig(setup), source);
+  const setup = options.setup ? validateSetup(options.setup) : await promptWorkspaceSetup('');
+  const output = buildOutput(directory, createRuntimeConfig(setup));
   output.localTemplate = renderLocalTemplate(setup.javaHome, setup.accounts);
   writeGeneratedFiles(output, { writeLocal: true });
   console.log(`已初始化工作区: ${output.paths.root}`);
@@ -671,6 +834,7 @@ export async function updateWorkspace(directory) {
   if (!fs.existsSync(paths.manifestFile) || !fs.existsSync(paths.configFile)) {
     throw new Error(`工作区尚未初始化: ${paths.root}；请先执行 workspace init`);
   }
+  tightenPrivatePermissions(paths.configDir);
   const workspaceEnv = { ...process.env, BS_JAVARUN_WORKSPACE: paths.root };
   const output = buildOutput(directory, loadConfig(workspaceEnv));
   const manifest = JSON.parse(fs.readFileSync(output.paths.manifestFile, 'utf8'));
@@ -678,8 +842,10 @@ export async function updateWorkspace(directory) {
   if (hash(current) !== manifest.managedConfigHash) {
     const nextFile = path.join(output.paths.configDir, 'JAVARUN.md.generated.next');
     const diffFile = path.join(output.paths.configDir, 'JAVARUN.md.update.diff');
-    fs.writeFileSync(nextFile, output.managedConfig, 'utf8');
-    fs.writeFileSync(diffFile, lineDiff(current, output.managedConfig), 'utf8');
+    writeFilesAtomically([
+      { file: nextFile, content: output.managedConfig },
+      { file: diffFile, content: lineDiff(current, output.managedConfig) },
+    ]);
     throw new Error(`检测到 ${MANAGED_CONFIG_NAME} 的手工修改，未覆盖。候选文件: ${nextFile}；差异报告: ${diffFile}`);
   }
   writeGeneratedFiles(output, { writeLocal: false });
@@ -704,6 +870,7 @@ export async function reconfigureWorkspace(directory, options = {}) {
 
   const workspaceEnv = { ...process.env, BS_JAVARUN_WORKSPACE: paths.root };
   const currentConfig = loadConfig(workspaceEnv);
+  tightenPrivatePermissions(paths.configDir);
   const replaceAll = Boolean(options.replaceAll);
   const setup = options.setup
     ? validateSetup(options.setup)
@@ -781,22 +948,52 @@ export async function doctorWorkspace(directory) {
 /**
  * 冒烟仅回收本次选择闭包内的工具进程，端口已有监听时仍由 start 的安全检查阻止继续执行。
  */
-export async function smokeWorkspace(directory, serviceArg, options) {
+export async function smokeWorkspace(directory, serviceArg, options, dependencies = {}) {
+  const doctor = dependencies.doctorWorkspace || doctorWorkspace;
+  const select = dependencies.selectServices || selectServices;
+  const startServices = dependencies.start || start;
+  const stopServices = dependencies.stop || stop;
   const paths = workspacePaths(directory);
   process.env.BS_JAVARUN_WORKSPACE = paths.root;
   delete globalThis._bsJavaRunConfig;
-  const doctorCode = await doctorWorkspace(directory);
+  const doctorCode = await doctor(directory);
   if (doctorCode !== 0) return doctorCode;
-  const selection = await selectServices(serviceArg, { ...options, yes: true }, '启动冒烟', { environmentScoped: true });
+  const selection = await select(serviceArg, { ...options, yes: true }, '启动冒烟', { environmentScoped: true });
   if (selection.cancelled || selection.empty) return selection.empty ? 1 : 0;
-  const startCode = await start(serviceArg, { ...options, yes: true, build: Boolean(options.build) });
+  const startedInstances = [];
+  let startCode = 1;
+  let stopCode = 0;
+
+  try {
+    try {
+      startCode = await startServices(serviceArg, {
+        ...options,
+        yes: true,
+        build: Boolean(options.build),
+        startedInstances,
+      });
+    } catch (startError) {
+      error(`冒烟启动失败: ${startError.message}`);
+      startCode = 1;
+    }
+  } finally {
+    if (!options.keepRunning) {
+      try {
+        stopCode = await stopServices('all', {
+          yes: true,
+          skipPid: false,
+          cascade: false,
+          force: false,
+          startedInstances,
+          runContext: options.runContext,
+        });
+      } catch (stopError) {
+        error(`冒烟清理失败: ${stopError.message}`);
+        stopCode = 1;
+      }
+    }
+  }
+
   if (options.keepRunning) return startCode;
-  const stopCode = await stop('all', {
-    yes: true,
-    targetServiceNames: selection.services.map(service => service.name),
-    skipPid: false,
-    cascade: false,
-    force: false,
-  });
   return startCode || stopCode ? 1 : 0;
 }

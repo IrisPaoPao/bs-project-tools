@@ -7,46 +7,11 @@
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
+const { parseMultiColumnTable } = require('./src/lib/markdown-config-parser.cjs');
 
 const SCRIPT_DIR = __dirname;
 const JAVARUN_MD = path.resolve(SCRIPT_DIR, 'JAVARUN.md');
 const JAVARUN_LOCAL_MD = path.resolve(SCRIPT_DIR, 'JAVARUN.local.md');
-
-function stripMarkdownValue(value) {
-  return String(value || '').trim().replace(/^`|`$/g, '');
-}
-
-function parseMultiColumnTable(content, sectionHeading, headerFirstCell) {
-  const rows = [];
-  const lines = String(content || '').split(/\r?\n/);
-  let inSection = false;
-  let inTable = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('## ')) {
-      if (trimmed === `## ${sectionHeading}`) {
-        inSection = true;
-        inTable = false;
-        continue;
-      }
-      if (inSection) break;
-    }
-    if (!inSection) continue;
-    if (!trimmed.startsWith('|')) {
-      inTable = false;
-      continue;
-    }
-    const cells = trimmed.split('|').slice(1, -1).map(stripMarkdownValue);
-    if (!inTable) {
-      if (cells[0] === headerFirstCell) inTable = true;
-      continue;
-    }
-    if (/^[\s-]+$/.test(cells.join(''))) continue;
-    rows.push(cells);
-  }
-  return rows;
-}
 
 function parseLoginEnvironments(content) {
   return parseMultiColumnTable(content, '运行环境', '环境名')
@@ -271,6 +236,7 @@ const LOGIN_INPUTS = {
     selectors: [
       'input[placeholder="请输入登录账号"]',
       'input[placeholder="请输入您的用户名"]',
+      'input[placeholder="请输入您的用户账号"]',
     ],
   },
   password: {

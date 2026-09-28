@@ -78,6 +78,99 @@ export function findRunningReverseDependents(targetServices, allServices, isRunn
   return reverseDependents;
 }
 
+/**
+ * 计算重启时一次性冻结的服务范围。级联增加运行中的反向依赖，并为新增服务补齐依赖。
+ */
+export function resolveRestartServices(targetServices, activeServices, allServices, inspectService, cascade = false, activeEnvironmentName = '') {
+  const activeByName = new Map(activeServices.map(service => [service.name, service]));
+  const allByName = new Map(allServices.map(service => [service.name, service]));
+  const selectedNames = new Set(targetServices.map(service => service.name));
+  const crossEnvironmentServices = new Set();
+  const stateCache = new Map();
+
+  const inspect = service => {
+    if (stateCache.has(service.name)) return stateCache.get(service.name);
+    const state = inspectService(service) || {};
+    const normalized = typeof state === 'boolean' ? { running: state } : state;
+    stateCache.set(service.name, normalized);
+    return normalized;
+  };
+  const cannotRestore = state => state.running && (
+    state.environmentKnown === false
+    || (activeEnvironmentName && state.environment !== activeEnvironmentName)
+  );
+
+  const reportCrossEnvironment = service => {
+    const state = inspect(service);
+    if (cannotRestore(state)) crossEnvironmentServices.add(service.name);
+  };
+
+  // 已运行的目标若无法确认属于当前环境，不能先停止再尝试在另一个环境恢复。
+  for (const name of selectedNames) {
+    const service = allByName.get(name);
+    reportCrossEnvironment(service);
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    if (cascade) {
+      for (const service of allServices) {
+        if (selectedNames.has(service.name) || !(service.dependsOn || []).some(name => selectedNames.has(name))) {
+          continue;
+        }
+        const state = inspect(service);
+        if (!state.running) continue;
+        if (!activeByName.has(service.name)) {
+          crossEnvironmentServices.add(service.name);
+          continue;
+        }
+        if (cannotRestore(state)) {
+          crossEnvironmentServices.add(service.name);
+          continue;
+        }
+        selectedNames.add(service.name);
+        changed = true;
+      }
+    } else {
+      // 即使未指定 --cascade，也必须在停服前发现依赖服务来自其它环境。
+      for (const service of allServices) {
+        if (!(service.dependsOn || []).some(name => selectedNames.has(name))) continue;
+        const state = inspect(service);
+        if (!state.running) continue;
+        if (!activeByName.has(service.name) || cannotRestore(state)) {
+          crossEnvironmentServices.add(service.name);
+        }
+      }
+    }
+
+    const current = [...selectedNames].map(name => allByName.get(name)).filter(Boolean);
+    for (const dependency of resolveDependenciesClosure(current, activeServices)) {
+      if (!selectedNames.has(dependency.name)) {
+        selectedNames.add(dependency.name);
+        changed = true;
+      }
+    }
+  }
+
+  // 级联服务补齐依赖后再校验完整集合，避免停掉另一环境的依赖服务却无法按当前环境恢复。
+  for (const name of selectedNames) {
+    const service = allByName.get(name);
+    if (service) reportCrossEnvironment(service);
+  }
+
+  if (crossEnvironmentServices.size > 0) {
+    return {
+      services: [],
+      crossEnvironmentServices: [...crossEnvironmentServices],
+    };
+  }
+
+  const services = topologicalSort(activeServices.filter(service => selectedNames.has(service.name)));
+  return { services, crossEnvironmentServices: [] };
+}
+
 export async function selectServices(serviceArg, options, title, { includeDependencies = true, environmentScoped = false } = {}) {
   const config = getConfig();
   const allServices = environmentScoped ? getActiveEnvironmentServices(config) : config.services;
@@ -107,9 +200,22 @@ export async function selectServices(serviceArg, options, title, { includeDepend
     }
   }
 
-  const initialSelected = serviceName === 'all'
-    ? allServices
-    : allServices.filter(s => s.name === serviceName);
+  const frozenNames = Array.isArray(options.targetServiceNames)
+    ? new Set(options.targetServiceNames)
+    : null;
+  if (frozenNames) {
+    const availableNames = new Set(allServices.map(service => service.name));
+    const missingNames = [...frozenNames].filter(name => !availableNames.has(name));
+    if (missingNames.length > 0) {
+      throw new Error(`冻结的服务范围不属于当前运行环境 ${config.activeEnvName}: ${missingNames.join(', ')}`);
+    }
+  }
+
+  const initialSelected = frozenNames
+    ? allServices.filter(service => frozenNames.has(service.name))
+    : serviceName === 'all'
+      ? allServices
+      : allServices.filter(s => s.name === serviceName);
 
   if (initialSelected.length === 0) {
     error(`没有要处理的服务: ${serviceName}`);
@@ -128,9 +234,21 @@ export async function selectServices(serviceArg, options, title, { includeDepend
   }
 
   // 启动/重启需要依赖闭包；构建保持用户明确指定的范围。
-  const sortedServices = includeDependencies
-    ? resolveDependenciesClosure(initialSelected, allServices)
-    : topologicalSort(initialSelected);
+  if (frozenNames) {
+    for (const service of initialSelected) {
+      for (const dependency of service.dependsOn || []) {
+        if (!frozenNames.has(dependency)) {
+          throw new Error(`冻结的服务范围缺少 ${service.name} 的依赖服务 ${dependency}`);
+        }
+      }
+    }
+  }
+
+  const sortedServices = frozenNames
+    ? topologicalSort(initialSelected)
+    : includeDependencies
+      ? resolveDependenciesClosure(initialSelected, allServices)
+      : topologicalSort(initialSelected);
 
   return { config, serviceName, services: sortedServices, cancelled: false, empty: false };
 }

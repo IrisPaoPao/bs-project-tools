@@ -83,6 +83,7 @@ test('login inputs support both current and legacy placeholder styles', () => {
   assert.match(getLoginInputSelector('mainAccount'), /请输入您的主账号/);
   assert.match(getLoginInputSelector('username'), /请输入登录账号/);
   assert.match(getLoginInputSelector('username'), /请输入您的用户名/);
+  assert.match(getLoginInputSelector('username'), /请输入您的用户账号/);
   assert.match(getLoginInputSelector('password'), /请输入密码/);
   assert.match(getLoginInputSelector('password'), /请输入您的密码/);
 });
@@ -153,4 +154,32 @@ test('login script reads a private account next to an explicitly provided worksp
 
   assert.equal(account.accountName, 'workspace-account');
   assert.equal(account.envName, 'dev');
+});
+
+test('login config shares escaped-cell and alignment parsing with the CLI', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-login-markdown-'));
+  const configFile = path.join(dir, 'JAVARUN.md');
+  const password = String.raw`slash\and|pipe`;
+  const encodedPassword = password.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  writeFileSync(configFile, `## 附注运行环境配置
+
+| 环境名 | Nacos 主机 | Nacos 命名空间 | 登录地址 | 登录接口 | 行业网关 | Feign 上下文 | 服务端上下文 |
+| :--- | ---: | :--- | :--- | :--- | :--- | :--- | :--- |
+| dev | host | namespace | http://login | POST /login | http://gateway | /feign | /server |
+
+## 账户定义
+
+| 账户别名 | 环境 | 主账号 | 用户名 | 密码 |
+| :--- | :--- | :--- | :--- | :--- |
+| special-account | dev | tenant | user | ${encodedPassword} |
+`);
+  const config = loadConfig({}, { configFile, localConfigFile: path.join(dir, 'missing.local.md') });
+  assert.equal(resolveAccount(config, 'special-account').password, password);
+
+  const malformedFile = path.join(dir, 'malformed.md');
+  writeFileSync(malformedFile, `## 运行环境\n\n| 环境名 | Nacos 主机 |\n| --- | --- |\n| dev | host | extra |\n`);
+  assert.throws(
+    () => loadConfig({}, { configFile: malformedFile }),
+    /Markdown 配置表“运行环境”第 .* 行列数错误/,
+  );
 });

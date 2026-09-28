@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import markdownParser from '../../src/lib/markdown-config-parser.cjs';
 
 import {
   getActiveEnvironmentServices,
@@ -245,4 +246,72 @@ test('loadConfig rejects accounts and service dependencies outside their environ
     environmentServiceRows: '| dev | demo-service | |',
   });
   assert.throws(() => loadConfig({}, { configFile: dependencyFile }), /启用了 demo-service，但未启用其依赖服务 base-service/);
+});
+
+test('loadConfig parses aligned tables and preserves escaped pipes in cells', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-config-'));
+  const password = String.raw`pipe|slash\|tail`;
+  const encodedPassword = password.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  const configFile = writeMarkdown(dir, 'aligned.md', {
+    envRows: DEFAULT_ENV_ROW,
+    accountRows: `| test-user | dev | tenant | user | ${encodedPassword} |`,
+    serviceRows: DEFAULT_SERVICE_ROW,
+    environmentServiceRows: DEFAULT_ENV_SERVICE_ROW,
+  });
+  const content = readFileSync(configFile, 'utf8')
+    .replace('| --- | --- | --- | --- | --- | --- | --- | --- |', '| :--- | ---: | :--- | --- | --- | --- | --- | --- |');
+  writeFileSync(configFile, content, 'utf8');
+
+  const config = loadConfig({}, { configFile });
+  assert.equal(config.environments[0].name, 'dev');
+  assert.equal(config.accounts[0].password, password);
+});
+
+test('loadConfig reports malformed rows and ignores documentation code fences for JDK sections', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-config-'));
+  const configFile = writeMarkdown(dir, 'malformed.md', {
+    envRows: DEFAULT_ENV_ROW,
+    accountRows: '| test-user | dev | tenant | user | password | extra |',
+    serviceRows: DEFAULT_SERVICE_ROW,
+    environmentServiceRows: DEFAULT_ENV_SERVICE_ROW,
+  });
+  assert.throws(() => loadConfig({}, { configFile }), /Markdown 配置表“账户定义”第 .* 行列数错误/);
+
+  const toolDocs = readFileSync(new URL('../../JAVARUN.md', import.meta.url), 'utf8');
+  assert.equal(markdownParser.readMarkdownSection(toolDocs, 'java 环境地址'), null);
+  assert.deepEqual(markdownParser.parseMultiColumnTable(toolDocs, '运行环境', '环境名'), []);
+});
+
+test('loadConfig reads JDK only from its section and rejects an invalid local value without falling back', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bs-java-run-config-'));
+  const configFile = writeMarkdown(dir, 'JAVARUN.md', {
+    envRows: DEFAULT_ENV_ROW,
+    serviceRows: DEFAULT_SERVICE_ROW,
+    environmentServiceRows: DEFAULT_ENV_SERVICE_ROW,
+  });
+  const content = readFileSync(configFile, 'utf8').replace(
+    '\n## JVM 参数组\n',
+    '\n### Other notes\n\n/Users/example/ContainsJava\n\n## java 环境地址\n\n/opt/shared-jdk\n\n## JVM 参数组\n',
+  );
+  writeFileSync(configFile, content, 'utf8');
+  assert.equal(loadConfig({}, { configFile }).javaHome, '/opt/shared-jdk');
+
+  const blockFile = writeMarkdown(dir, 'jdk-code-block.md', {
+    envRows: DEFAULT_ENV_ROW,
+    serviceRows: DEFAULT_SERVICE_ROW,
+    environmentServiceRows: DEFAULT_ENV_SERVICE_ROW,
+  });
+  const blockContent = readFileSync(blockFile, 'utf8').replace(
+    '\n## JVM 参数组\n',
+    '\n## java 环境地址\n\n```text\n/opt/boxed-jdk\n```\n\n## JVM 参数组\n',
+  );
+  writeFileSync(blockFile, blockContent, 'utf8');
+  assert.equal(loadConfig({}, { configFile: blockFile }).javaHome, '/opt/boxed-jdk');
+
+  const localFile = path.join(dir, 'JAVARUN.local.md');
+  writeFileSync(localFile, '## java 环境地址\n\nrelative/jdk\n', 'utf8');
+  assert.throws(
+    () => loadConfig({}, { configFile, localConfigFile: localFile }),
+    /JAVARUN.local.md 的 JDK 根目录必须是绝对路径/,
+  );
 });
