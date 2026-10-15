@@ -86,4 +86,4 @@ bs-java-run token --env zhsf-test-industry-02 --account test-zhsf-001 --quiet
 3. **PID 安全归属校验**：
    启动时自动生成 `-Dbs.javarun.instance=<UUID>`，停止前使用 `ps -ww -p` 长命令强校验 UUID 与模块名，拒绝误杀宿主其它进程。
 4. **日志游标与截断复位**：
-   基于增量日志游标 `{inode, byteOffset}` 消费日志，消除历史日志引发的提前解锁误判，保持错误排查现场。
+   基于增量日志游标 `{inode, byteOffset}` 连续消费运行日志及滚动分片，消除历史日志引发的提前解锁误判。运行日志只保留最近 2 小时，按分钟淘汰；服务退出或成功停止后删除，停止失败时保留。

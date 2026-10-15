@@ -210,6 +210,10 @@ BS_STARTUP_TIMEOUT=600 bs-java-run start <service> --env dev --yes
 
 LOG_DIR 可覆盖日志目录；未覆盖时普通模式使用配置默认日志目录，工作区默认使用 .bs-java-run/logs/。BS_JAVA_HOME 和私有配置中的 Java 根目录必须指向有效 JDK。启动等待默认 420 秒，可由 BS_STARTUP_TIMEOUT 或 --startup-timeout 覆盖；它是等待上限，不是业务健康检查。
 
+服务运行日志由独立日志进程管理，只保留最近 2 小时的输出，按分钟滚动和淘汰，窗口边界最多提前一分钟。`<service>.log` 是当前分钟日志，`<service>.log.<分钟时间戳>` 是窗口内的历史分片。启动检查会连续读取这些分片；查看最近两小时内容时需同时读取历史分片和当前文件。实时跟踪当前文件使用 `tail -F`，以便在滚动后自动重新打开文件。
+
+确认服务停止后，stop 会删除该服务的运行日志及分片；服务自行退出时日志进程也会清理。停止失败或进程归属不匹配时保留日志。restart 的停止阶段同样执行清理。新策略在服务下次启动后生效，已运行的旧实例仍使用原来的输出文件；对旧实例成功执行 stop 时也会删除原日志。构建日志和 history 操作记录分别管理。
+
 ## 故障排查
 
 1. 先确认当前模式和配置来源：工作区检查 <root>/javarun、.bs-java-run/JAVARUN.md、.bs-java-run/JAVARUN.local.md；普通模式检查工具目录的两个 JAVARUN 文件。

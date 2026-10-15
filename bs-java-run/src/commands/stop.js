@@ -9,6 +9,7 @@ import {
   waitProcessExit,
   readPidInfo,
   removePidFile,
+  getLogFile,
   verifyProcessBelongsToService,
 } from '../lib/process-manager.js';
 import {
@@ -23,6 +24,7 @@ import {
   interactiveSelect,
 } from '../lib/logger.js';
 import { withJsonOutput } from '../lib/command-output.js';
+import { removeServiceLogs } from '../lib/service-logs.js';
 
 function setPhase(runContext, phase, detail) {
   try {
@@ -74,6 +76,8 @@ export async function stopSingleService(service, options = {}, dependencies = {}
   const waitExit = dependencies.waitProcessExit || waitProcessExit;
   const waitPortReleased = dependencies.waitPortFree || waitPortFree;
   const verifyBelongs = dependencies.verifyProcessBelongsToService || verifyProcessBelongsToService;
+  const removeLogs = dependencies.removeServiceLogs || removeServiceLogs;
+  const logPath = dependencies.getLogFile || getLogFile;
   const trackedInstance = Array.isArray(options.startedInstances)
     ? options.startedInstances.find(instance => instance.serviceName === service.name)
     : null;
@@ -112,7 +116,6 @@ export async function stopSingleService(service, options = {}, dependencies = {}
           return false;
         }
         success(`  ${service.name} (PID ${pid}) 已停止`);
-        removePidInfoIfMatches(service.name, pidInfo, getPidInfo, removePid);
       } else {
         error(`安全拦截: PID ${pid} 的命令行与 ${service.name} 记录的 UUID (${pidInfo.uuid}) 不匹配！`);
         error(`命令行: ${processCommand(pid)}`);
@@ -121,8 +124,6 @@ export async function stopSingleService(service, options = {}, dependencies = {}
           return false;
         }
       }
-    } else {
-      removePidInfoIfMatches(service.name, pidInfo, getPidInfo, removePid);
     }
   }
 
@@ -154,6 +155,29 @@ export async function stopSingleService(service, options = {}, dependencies = {}
     if (!freed) return false;
   }
 
+  // 端口释放不代表进程已退出；仍持有日志描述符时不能删除文件。
+  if (pidInfo?.pid && processAlive(pidInfo.pid)) return false;
+  for (const pid of portPids) {
+    if (processAlive(pid) && !await waitExit(pid, 5)) return false;
+  }
+  if (pidInfo?.logPid && processAlive(pidInfo.logPid)) {
+    const cmd = processCommand(pidInfo.logPid);
+    if (!cmd.includes('service-runner.js') || !cmd.includes(pidInfo.uuid)) {
+      error('日志进程归属不匹配，保留日志文件');
+      return false;
+    }
+    if (!await waitExit(pidInfo.logPid, 5)) {
+      error('日志进程尚未退出，保留日志文件');
+      return false;
+    }
+  }
+  const current = getPidInfo(service.name);
+  if (current && (!pidInfo || current.pid !== pidInfo.pid || current.uuid !== pidInfo.uuid)) {
+    error('服务实例已变更，保留新实例日志');
+    return false;
+  }
+  removeLogs(logPath(service.name));
+  if (pidInfo) removePidInfoIfMatches(service.name, pidInfo, getPidInfo, removePid);
   return true;
 }
 
@@ -308,7 +332,7 @@ async function stopImplementation(serviceArg, options = {}, dependencies = {}) {
     error('部分本次启动实例未能清理，请检查停止错误和日志现场');
     return 1;
   }
-  info('停止操作完成 (保留日志文件现场)');
+  info('停止操作完成，已删除服务运行日志');
   return 0;
 }
 

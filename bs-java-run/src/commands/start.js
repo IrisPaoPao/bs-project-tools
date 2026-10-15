@@ -265,6 +265,7 @@ async function startImplementation(serviceArg, options = {}, dependencies = {}) 
           const instanceInfo = {
             serviceName: service.name,
             pid: started.pid,
+            logPid: started.logPid,
             uuid: started.uuid,
             environment: started.environment || config.activeEnvName || null,
             serverModule: started.serverModule,
@@ -291,6 +292,7 @@ async function startImplementation(serviceArg, options = {}, dependencies = {}) 
       startedInstances.push({
         serviceName: service.name,
         pid: instance.pid,
+        logPid: instance.pidInfo?.logPid,
         uuid: instance.uuid,
         environment: instance.pidInfo?.environment || config.activeEnvName || null,
         serverModule: instance.pidInfo?.serverModule,

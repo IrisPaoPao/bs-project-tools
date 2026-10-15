@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { getConfig, parseJvmOptionKey, resolveServiceRuntimeConfig } from './config.js';
 import { info, success, error } from './logger.js';
+import { launchLoggedProcess } from './logged-process.js';
+import { listServiceLogs } from './service-logs.js';
 
 const MAX_INCREMENTAL_LOG_BYTES = 1024 * 1024;
 const MAX_MAVEN_CAPTURE_BYTES = 8 * 1024 * 1024;
@@ -559,13 +561,6 @@ export async function startJavaService(name, port, root, options = {}) {
   ensureLogDir();
   const logFile = getLogFile(name);
 
-  const outFd = fs.openSync(logFile, 'a+');
-  const statBefore = fs.fstatSync(outFd);
-  const logCursor = {
-    inode: statBefore.ino,
-    offset: statBefore.size,
-  };
-
   const instanceUuid = crypto.randomUUID();
 
   const nacosHost = serviceRuntimeConfig.nacosHost;
@@ -598,130 +593,96 @@ export async function startJavaService(name, port, root, options = {}) {
 
   info(`启动 ${name} (端口 ${port}, Java: ${javaBin}) ...`);
 
-  let child;
+  const child = await launchLoggedProcess(javaBin, args, { cwd: targetDir, logFile, instanceUuid });
+  const pidInfo = {
+    pid: child.pid,
+    logPid: child.logPid,
+    uuid: instanceUuid,
+    serviceName: name,
+    servicePath: fingerprintInfo.fingerprintSummary.servicePath,
+    port,
+    serverModule,
+    warName,
+    environment: config.activeEnvName || null,
+    ready: false,
+    fingerprint: fingerprintInfo.fingerprint,
+    fingerprintVersion: fingerprintInfo.fingerprintVersion,
+    fingerprintSummary: fingerprintInfo.fingerprintSummary,
+    startTime: new Date().toISOString(),
+  };
+
   try {
-    child = (options.spawnProcess || spawn)(javaBin, args, {
-      cwd: targetDir,
-      detached: true,
-      stdio: ['ignore', outFd, outFd],
+    options.onInstanceStarted?.({
+      serviceName: name,
+      pid: child.pid,
+      logPid: child.logPid,
+      uuid: instanceUuid,
+      environment: pidInfo.environment,
+      serverModule,
+      warName,
     });
-  } catch (spawnError) {
-    fs.closeSync(outFd);
-    throw new Error(`启动 Java 进程失败 (${javaBin}): ${spawnError.message}`);
+  } catch {
+    // 运行记录回调不应影响已启动进程的管理。
   }
 
-  return new Promise((resolve, reject) => {
-    let fdClosed = false;
-    const closeOutput = () => {
-      if (fdClosed) return;
-      fdClosed = true;
-      fs.closeSync(outFd);
-    };
-
-    child.once('error', spawnError => {
-      closeOutput();
-      reject(new Error(`启动 Java 进程失败 (${javaBin}): ${spawnError.message}`));
-    });
-
-    child.once('spawn', () => {
-      if (!child.pid) {
-        closeOutput();
-        reject(new Error(`Java 进程启动后未返回 PID: ${javaBin}`));
-        return;
-      }
-
-      const pidInfo = {
-        pid: child.pid,
-        uuid: instanceUuid,
-        serviceName: name,
-        servicePath: fingerprintInfo.fingerprintSummary.servicePath,
-        port,
-        serverModule,
-        warName,
-        environment: config.activeEnvName || null,
-        ready: false,
-        fingerprint: fingerprintInfo.fingerprint,
-        fingerprintVersion: fingerprintInfo.fingerprintVersion,
-        fingerprintSummary: fingerprintInfo.fingerprintSummary,
-        startTime: new Date().toISOString(),
-      };
-
-      try {
-        options.onInstanceStarted?.({
-          serviceName: name,
-          pid: child.pid,
-          uuid: instanceUuid,
-          environment: pidInfo.environment,
-          serverModule,
-          warName,
-        });
-      } catch {
-        // 运行记录回调不应影响已启动进程的管理。
-      }
-
-      const persistPidInfo = options.writePidInfo || writePidInfo;
-      try {
-        persistPidInfo(name, pidInfo);
-      } catch (writeError) {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // PID 元数据无法写入时尽力回收刚创建的实例，避免留下不可追踪的进程。
-        }
-        closeOutput();
-        reject(new Error(`无法保存 ${name} 的 PID 信息，已请求停止新进程: ${writeError.message}`));
-        return;
-      }
-
-      child.unref();
-      closeOutput();
-      info(`  PID: ${child.pid}, UUID: ${instanceUuid}, 日志: ${logFile}`);
-      resolve({
-        pid: child.pid,
-        uuid: instanceUuid,
-        logCursor,
-        fingerprint: fingerprintInfo.fingerprint,
-        pidInfo,
-      });
-    });
-  });
+  try {
+    (options.writePidInfo || writePidInfo)(name, pidInfo);
+  } catch (writeError) {
+    child.stop();
+    child.release();
+    throw new Error(`无法保存 ${name} 的 PID 信息，已请求停止新进程: ${writeError.message}`);
+  }
+  child.release();
+  info(`  PID: ${child.pid}, UUID: ${instanceUuid}, 日志: ${logFile}`);
+  return {
+    pid: child.pid,
+    uuid: instanceUuid,
+    // 新实例日志由日志进程重建；从头读取，包含 Java 启动后的第一批输出。
+    logCursor: { inode: 0, offset: 0 },
+    fingerprint: fingerprintInfo.fingerprint,
+    pidInfo,
+  };
 }
 
 export function readIncrementalLog(logFile, cursor) {
-  if (!fs.existsSync(logFile)) {
-    return { incrementalText: '', cursor };
+  const files = listServiceLogs(logFile).flatMap(file => {
+    try { return [{ file, stat: fs.statSync(file) }]; } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  });
+  if (files.length === 0) return { incrementalText: '', cursor };
+  let index = files.findIndex(entry => entry.stat.ino === cursor.inode);
+  let offset = cursor.offset;
+  if (index < 0) {
+    index = 0;
+    offset = 0;
   }
-
-  const stat = fs.statSync(logFile);
-  let currentOffset = cursor.offset;
-  let currentInode = cursor.inode;
-
-  if (stat.ino !== currentInode || stat.size < currentOffset) {
-    currentOffset = 0;
-    currentInode = stat.ino;
+  const chunks = [];
+  let remaining = MAX_INCREMENTAL_LOG_BYTES;
+  let nextCursor = cursor;
+  for (; index < files.length && remaining > 0; index++) {
+    const { file, stat } = files[index];
+    if (offset > stat.size) offset = 0;
+    let fd;
+    try {
+      fd = fs.openSync(file, 'r');
+      if (fs.fstatSync(fd).ino !== stat.ino) break;
+      const buffer = Buffer.alloc(Math.min(stat.size - offset, remaining));
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, offset);
+      chunks.push(buffer.subarray(0, bytesRead));
+      remaining -= bytesRead;
+      nextCursor = { inode: stat.ino, offset: offset + bytesRead };
+    } catch (error) {
+      // 分片可能恰好被轮转或过期删除；下次轮询会按 inode 重新定位。
+      if (error.code === 'ENOENT') break;
+      throw error;
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+    offset = 0;
   }
-
-  if (stat.size <= currentOffset) {
-    return { incrementalText: '', cursor: { inode: currentInode, offset: currentOffset } };
-  }
-
-  // 单次最多读取 1 MiB，避免高频日志在一次轮询中造成大内存分配。
-  const bytesToRead = Math.min(stat.size - currentOffset, MAX_INCREMENTAL_LOG_BYTES);
-  const buffer = Buffer.alloc(bytesToRead);
-  const fd = fs.openSync(logFile, 'r');
-  try {
-    fs.readSync(fd, buffer, 0, bytesToRead, currentOffset);
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  const newOffset = currentOffset + bytesToRead;
-  const incrementalText = buffer.toString('utf8');
-
-  return {
-    incrementalText,
-    cursor: { inode: currentInode, offset: newOffset },
-  };
+  return { incrementalText: Buffer.concat(chunks).toString('utf8'), cursor: nextCursor };
 }
 
 export function classifyStartupException(text = '') {
