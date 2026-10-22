@@ -1,0 +1,19 @@
+{
+  "default_profile": "dev",
+  "profiles": {
+    "dev": {
+      "mode": "kubesphere",
+      "url": "http://kubesphere.example.internal:30880",
+      "username": "your-user",
+      "password_env": "BS_K8S_DEV_PASSWORD",
+      "verify_tls": true
+    },
+    "native": {
+      "mode": "kubernetes",
+      "url": "https://kubernetes.example.internal:6443",
+      "token_env": "BS_K8S_NATIVE_TOKEN",
+      "ca_file": "/absolute/path/to/ca.crt",
+      "verify_tls": true
+    }
+  }
+}

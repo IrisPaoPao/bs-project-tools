@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bs-k8s-cli"
+version = "0.1.0"
+description = "通过 HTTP API 管理 KubeSphere 与 Kubernetes 的 BS 运维 CLI"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31,<3", "PyYAML>=6.0.1,<7"]
+
+[project.scripts]
+bsq-k8s = "bs_k8s.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bs_k8s*"]
