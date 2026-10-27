@@ -113,7 +113,17 @@ bsq-jira comment delete PROJ-123 10523 # 删除指定评论（支持别名 rm / 
 - **requests** - HTTP 客户端与会话管理
 - **rich** - 极致的终端排版与色彩美化
 
-## 附件保存与回归验证
+## 附件上传、保存与回归验证
+
+```bash
+# 上传单个或多个文件，复用现有登录配置
+bsq-jira attachment upload YLZHXT-1234 './测试报告.xlsx'
+bsq-jira attachment upload YLZHXT-1234 './测试报告.xlsx' './错误截图.png'
+```
+
+上传前检查全部文件是否存在且可读；使用一次 multipart 请求，成功后显示附件 ID、名称及下载地址。附件权限、开关和大小限制以 Jira 服务器为准。超时、断连或响应异常后，先用 `bsq-jira issue show <KEY>` 核对是否已保存，避免直接重试造成重复附件。
+
+上传协议遵循 [Jira 6.0 附件 API](https://docs.atlassian.com/software/jira/docs/api/6.0/com/atlassian/jira/rest/v2/issue/IssueAttachmentsResource.html)，使用 `file` 字段与 `X-Atlassian-Token: nocheck`。
 
 `bsq-jira attachment download '<附件URL>' --dest-dir '<目标目录>'` 支持中文文件名，拒绝越界路径与同名覆盖。下载完成前只写临时文件；中断会清理临时内容，不留下最终半成品。遇到同名文件时选择其他保存目录，工具不会删除旧文件。
 

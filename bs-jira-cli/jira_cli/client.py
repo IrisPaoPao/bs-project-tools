@@ -5,9 +5,11 @@
 """
 
 import os
+import mimetypes
 import re
 import tempfile
 import urllib.parse
+from contextlib import ExitStack
 from pathlib import Path
 import requests
 
@@ -380,6 +382,41 @@ class JiraClient:
     def get_statuses(self) -> list:
         """获取所有可用状态"""
         return self._request("GET", "/status")
+
+    def upload_attachments(self, issue_key: str, file_paths: list[str]) -> list:
+        """将一个或多个本地文件上传到指定任务，返回服务器生成的附件信息。"""
+        issue_key = issue_key.strip().upper()
+        if not issue_key:
+            raise ValueError("任务号不能为空")
+        if not file_paths:
+            raise ValueError("至少指定一个附件文件")
+
+        paths = [Path(path).expanduser() for path in file_paths]
+        for path in paths:
+            if not path.is_file():
+                raise ValueError(f"附件不是可用的普通文件: {path}")
+
+        # 先打开全部文件，避免后续文件不可读时已发出上传；请求结束后统一关闭。
+        with ExitStack() as stack:
+            files = []
+            for path in paths:
+                stream = stack.enter_context(path.open("rb"))
+                mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                files.append(("file", (path.name, stream, mime_type)))
+
+            # 仅本次请求移除默认 JSON 头，让 requests 生成带 boundary 的 multipart 头。
+            attachments = self._request(
+                "POST", f"/issue/{urllib.parse.quote(issue_key, safe='')}/attachments",
+                files=files,
+                headers={"Content-Type": None, "X-Atlassian-Token": "nocheck"},
+                timeout=300,
+            )
+
+        if (not isinstance(attachments, list) or len(attachments) != len(paths) or
+                any(not isinstance(item, dict) or not item.get("id") or
+                    not item.get("filename") for item in attachments)):
+            raise JiraAPIError(0, "上传响应未返回完整附件信息，请先核对任务附件，勿直接重试")
+        return attachments
 
     def download_attachment(self, url: str, dest_dir: str = ".") -> str:
         """下载附件到指定目录
